@@ -25,6 +25,19 @@ class KeyParsingTests(unittest.TestCase):
         key = parse_loop_key("  7  ")
         self.assertEqual(key.char, "7")
 
+    def test_parse_hotkey_valid_and_disabled(self):
+        from maplebot.keys import parse_hotkey
+
+        self.assertIsNone(parse_hotkey("none"))
+        self.assertIsNone(parse_hotkey("disabled"))
+        self.assertIsNone(parse_hotkey(""))
+
+        key_space = parse_hotkey("space")
+        self.assertEqual(key_space.name, "space")
+
+        key_f12 = parse_hotkey("f12")
+        self.assertEqual(key_f12.name, "f12")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -16,9 +16,14 @@ from .keys import (
     DEFAULT_SHUFFLE_MIN_HOLD,
     MIN_POTION_INTERVAL,
     parse_loop_key,
+    parse_hotkey,
+    Key,
+    KeyCode,
+    PYNPUT_AVAILABLE,
 )
 from .windows import enumerate_maple_windows
 MAX_TAB_NAME_LENGTH = 24
+HOTKEY_CHOICES = ("none",) + COMMON_KEY_CHOICES
 
 
 def default_instance_name(info: dict[str, object]) -> str:
@@ -65,10 +70,13 @@ class MapleBotGUI:
         self.auto_refresh_var = tk.BooleanVar(value=True)
         self.auto_refresh_interval = tk.DoubleVar(value=10.0)
         self.auto_refresh_job: str | None = None
+        self.stop_all_key_var = tk.StringVar(value="f8")
+        self.keyboard_listener = None
 
         self._build_layout()
         self.refresh_window_list()
         self._toggle_auto_refresh()
+        self._start_global_listener()
 
     def _build_layout(self) -> None:
         toolbar = ttk.Frame(self.root, padding=(10, 10, 10, 2))
@@ -76,6 +84,13 @@ class MapleBotGUI:
 
         ttk.Button(toolbar, text="↻ Refresh", command=self.refresh_window_list, width=12).pack(side="left")
         ttk.Button(toolbar, text="⏹ Stop All", command=self.stop_all, width=12).pack(side="left", padx=(4, 0))
+        ttk.Label(toolbar, text="Stop All Key:").pack(side="left", padx=(10, 4))
+        ttk.Combobox(
+            toolbar,
+            textvariable=self.stop_all_key_var,
+            values=HOTKEY_CHOICES,
+            width=8
+        ).pack(side="left")
         ttk.Separator(toolbar, orient="vertical").pack(side="left", fill="y", padx=10)
         ttk.Checkbutton(
             toolbar,
@@ -165,11 +180,11 @@ class MapleBotGUI:
             if hwnd not in self.window_tabs:
                 self._create_window_tab(info)
 
-    def _create_key_input(self, parent: ttk.Frame, label_text: str, var: tk.StringVar) -> None:
+    def _create_key_input(self, parent: ttk.Frame, label_text: str, var: tk.StringVar, choices=COMMON_KEY_CHOICES) -> None:
         row = ttk.Frame(parent)
         row.pack(fill="x", pady=2)
         ttk.Label(row, text=label_text, width=14).pack(side="left")
-        combo = ttk.Combobox(row, textvariable=var, values=COMMON_KEY_CHOICES, width=12)
+        combo = ttk.Combobox(row, textvariable=var, values=choices, width=12)
         combo.pack(side="left")
         ttk.Label(row, text="or type custom", foreground="#888").pack(side="left", padx=(6, 0))
 
@@ -201,6 +216,7 @@ class MapleBotGUI:
             "skill_3_enabled": tk.BooleanVar(value=False),
             "skills_interval": tk.DoubleVar(value=180.0),
             "status": tk.StringVar(value="Stopped"),
+            "stop_key": tk.StringVar(value="none"),
         }
         self.window_vars[hwnd] = vars_map
 
@@ -217,6 +233,7 @@ class MapleBotGUI:
         loop_frame = ttk.LabelFrame(settings_frame, text="Attack loop", padding=8)
         loop_frame.pack(fill="x", pady=(0, 8))
         self._create_key_input(loop_frame, "Loop key", vars_map["loop_key"])
+        self._create_key_input(loop_frame, "Stop key", vars_map["stop_key"], choices=HOTKEY_CHOICES)
         loop_controls = ttk.Frame(loop_frame)
         loop_controls.pack(fill="x", pady=2)
         ttk.Label(loop_controls, text="Interval (s)", width=14).pack(side="left")
@@ -487,8 +504,56 @@ class MapleBotGUI:
     def on_close(self) -> None:
         if self.auto_refresh_job is not None:
             self.root.after_cancel(self.auto_refresh_job)
+        if self.keyboard_listener is not None:
+            try:
+                self.keyboard_listener.stop()
+            except Exception:
+                pass
         self.stop_all()
         self.root.destroy()
+
+    def _start_global_listener(self) -> None:
+        if not PYNPUT_AVAILABLE:
+            return
+
+        from pynput import keyboard
+
+        def match_key(event_key, config_key_str: str) -> bool:
+            config_key = parse_hotkey(config_key_str)
+            if config_key is None:
+                return False
+            if event_key == config_key:
+                return True
+            if isinstance(event_key, KeyCode) and isinstance(config_key, KeyCode):
+                if event_key.char is not None and config_key.char is not None:
+                    return event_key.char.lower() == config_key.char.lower()
+                if event_key.vk is not None and config_key.vk is not None:
+                    return event_key.vk == config_key.vk
+            return False
+
+        def on_press(key):
+            try:
+                # 1. Check Stop All Hotkey
+                if match_key(key, self.stop_all_key_var.get()):
+                    self.root.after(0, self.stop_all)
+                    return
+
+                # 2. Check individual instance Stop Keys
+                for hwnd, vars_map in list(self.window_vars.items()):
+                    status = vars_map.get("status")
+                    if status is not None and status.get() == "Running":
+                        stop_key_str = vars_map.get("stop_key")
+                        if stop_key_str is not None and match_key(key, stop_key_str.get()):
+                            self.root.after(0, self.stop_bot, hwnd)
+            except RuntimeError:
+                pass
+
+        try:
+            self.keyboard_listener = keyboard.Listener(on_press=on_press)
+            self.keyboard_listener.start()
+            print("Global keyboard listener started.")
+        except Exception as e:
+            print(f"Failed to start global keyboard listener: {e}")
 
     def run(self) -> None:
         self.root.mainloop()

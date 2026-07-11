@@ -26,7 +26,11 @@ except ImportError:
         def __repr__(self) -> str:
             return f"Key.{self.name}"
 
-    class Key:
+    class _KeyMeta(type):
+        def __getattr__(cls, name: str):
+            return _NamedKey(name)
+
+    class Key(metaclass=_KeyMeta):
         space = _NamedKey("space")
         enter = _NamedKey("enter")
         tab = _NamedKey("tab")
@@ -122,6 +126,8 @@ def parse_loop_key(name: str):
     normalized = name.strip().lower()
     if normalized in KEY_NAME_MAP:
         return KEY_NAME_MAP[normalized]
+    if hasattr(Key, normalized):
+        return getattr(Key, normalized)
     if len(normalized) == 1:
         return KeyCode.from_char(normalized)
 

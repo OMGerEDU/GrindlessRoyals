@@ -24,7 +24,12 @@ class KeyParsingTests(unittest.TestCase):
     def test_whitespace_is_ignored(self):
         key = parse_loop_key("  7  ")
         self.assertEqual(key.char, "7")
-
+    def test_function_keys_and_modifiers(self):
+        key_f1 = parse_loop_key("f1")
+        self.assertIsNotNone(key_f1)
+        
+        key_shift = parse_loop_key("shift")
+        self.assertIsNotNone(key_shift)
 
 if __name__ == "__main__":
     unittest.main()

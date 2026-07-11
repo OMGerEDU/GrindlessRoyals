@@ -20,6 +20,49 @@ from .keys import (
 from .windows import enumerate_maple_windows
 MAX_TAB_NAME_LENGTH = 24
 
+TK_TO_PYNPUT_MAP = {
+    "space": "space",
+    "Return": "enter",
+    "Tab": "tab",
+    "Escape": "esc",
+    "Left": "left",
+    "Right": "right",
+    "Up": "up",
+    "Down": "down",
+    "Home": "home",
+    "End": "end",
+    "Prior": "page_up",
+    "Next": "page_down",
+    "Insert": "insert",
+    "Delete": "delete",
+    "BackSpace": "backspace",
+    "Caps_Lock": "caps_lock",
+    "Num_Lock": "num_lock",
+    "Scroll_Lock": "scroll_lock",
+    "Print": "print_screen",
+    "Pause": "pause",
+    "Shift_L": "shift",
+    "Shift_R": "shift_r",
+    "Control_L": "ctrl",
+    "Control_R": "ctrl_r",
+    "Alt_L": "alt",
+    "Alt_R": "alt_r",
+}
+
+
+def map_tkinter_event_to_key(event) -> str:
+    sym = event.keysym
+    if sym in TK_TO_PYNPUT_MAP:
+        return TK_TO_PYNPUT_MAP[sym]
+
+    if len(sym) >= 2 and sym.startswith("F") and sym[1:].isdigit():
+        return sym.lower()
+
+    if event.char and len(event.char) == 1:
+        return event.char.lower()
+
+    return sym.lower()
+
 
 def default_instance_name(info: dict[str, object]) -> str:
     title = str(info.get("title") or "").strip()
@@ -65,6 +108,8 @@ class MapleBotGUI:
         self.auto_refresh_var = tk.BooleanVar(value=True)
         self.auto_refresh_interval = tk.DoubleVar(value=10.0)
         self.auto_refresh_job: str | None = None
+        self.active_binder: ttk.Button | None = None
+        self.active_binder_var: tk.StringVar | None = None
 
         self._build_layout()
         self.refresh_window_list()
@@ -165,13 +210,75 @@ class MapleBotGUI:
             if hwnd not in self.window_tabs:
                 self._create_window_tab(info)
 
+    def _cancel_active_binder(self) -> None:
+        if self.active_binder is not None and self.active_binder_var is not None:
+            try:
+                self.active_binder.config(text=self.active_binder_var.get(), state="normal")
+            except Exception:
+                pass
+            self.root.unbind("<Key>")
+            self.active_binder = None
+            self.active_binder_var = None
+
+    def _create_key_binder(self, parent: ttk.Frame, var: tk.StringVar) -> ttk.Button:
+        btn = ttk.Button(parent, text=var.get(), width=12)
+
+        def on_var_change(*args):
+            if self.active_binder != btn:
+                try:
+                    btn.config(text=var.get())
+                except Exception:
+                    pass
+        var.trace_add("write", on_var_change)
+
+        def start_listening():
+            self._cancel_active_binder()
+
+            self.active_binder = btn
+            self.active_binder_var = var
+            btn.config(text="< Press Key >", state="disabled")
+
+            old_focus = self.root.focus_get()
+            self.root.focus_set()
+
+            def on_key_press(event):
+                self.root.unbind("<Key>")
+                self.active_binder = None
+                self.active_binder_var = None
+                
+                try:
+                    btn.config(state="normal")
+                except Exception:
+                    pass
+
+                key_name = map_tkinter_event_to_key(event)
+                var.set(key_name)
+                try:
+                    btn.config(text=key_name)
+                except Exception:
+                    pass
+
+                if old_focus:
+                    try:
+                        old_focus.focus_set()
+                    except Exception:
+                        pass
+                return "break"
+
+            self.root.bind("<Key>", on_key_press)
+
+        btn.config(command=start_listening)
+        return btn
+
     def _create_key_input(self, parent: ttk.Frame, label_text: str, var: tk.StringVar) -> None:
         row = ttk.Frame(parent)
         row.pack(fill="x", pady=2)
         ttk.Label(row, text=label_text, width=14).pack(side="left")
-        combo = ttk.Combobox(row, textvariable=var, values=COMMON_KEY_CHOICES, width=12)
-        combo.pack(side="left")
-        ttk.Label(row, text="or type custom", foreground="#888").pack(side="left", padx=(6, 0))
+        
+        binder_btn = self._create_key_binder(row, var)
+        binder_btn.pack(side="left")
+        
+        ttk.Label(row, text="Click to bind key", foreground="#888").pack(side="left", padx=(8, 0))
 
     def _create_window_tab(self, info: dict[str, int | str]) -> None:
         hwnd = int(info["hwnd"])
@@ -203,6 +310,56 @@ class MapleBotGUI:
             "status": tk.StringVar(value="Stopped"),
         }
         self.window_vars[hwnd] = vars_map
+
+        # Trace variables to dynamically update the active bot instance in real-time
+        def make_trace_callback(h=hwnd, name="", var=None):
+            def callback(*args):
+                bot = self.bots.get(h)
+                if bot is None:
+                    return
+                try:
+                    val = var.get()
+                    if name == "loop_key":
+                        bot.loop_key = parse_loop_key(str(val))
+                    elif name == "loop_interval":
+                        bot.loop_interval = max(0.05, float(val))
+                    elif name == "background":
+                        bot.background_loop = bool(val)
+                    elif name == "potion_enabled":
+                        bot.potion_enabled = bool(val)
+                    elif name == "potion_key":
+                        bot.potion_key = parse_loop_key(str(val))
+                    elif name == "potion_interval":
+                        bot.potion_interval = max(MIN_POTION_INTERVAL, float(val))
+                    elif name == "walk_enabled":
+                        bot.walk_enabled = bool(val)
+                    elif name == "walk_interval":
+                        bot.walk_interval = max(MIN_POTION_INTERVAL, float(val))
+                    elif name == "walk_min":
+                        bot.walk_min_hold = max(0.0, float(val))
+                    elif name == "walk_max":
+                        bot.walk_max_hold = max(bot.walk_min_hold, float(val))
+                    elif name == "skills_interval":
+                        bot.skills_interval = max(5.0, float(val))
+                    elif name in (
+                        "skill_1",
+                        "skill_2",
+                        "skill_3",
+                        "skill_1_enabled",
+                        "skill_2_enabled",
+                        "skill_3_enabled",
+                    ):
+                        skills_to_use = []
+                        for idx in (1, 2, 3):
+                            if bool(vars_map[f"skill_{idx}_enabled"].get()):
+                                skills_to_use.append(parse_loop_key(str(vars_map[f"skill_{idx}"].get())))
+                        bot.skills_to_use = skills_to_use
+                except Exception:
+                    pass
+            return callback
+
+        for name, var in vars_map.items():
+            var.trace_add("write", make_trace_callback(hwnd, name, var))
 
         header = ttk.Frame(tab)
         header.pack(fill="x")
@@ -311,8 +468,8 @@ class MapleBotGUI:
                 text=f"Auto Skill {idx}",
                 variable=vars_map[f"{key_name}_enabled"],
             ).pack(side="left")
-            combo = ttk.Combobox(row, textvariable=vars_map[key_name], values=COMMON_KEY_CHOICES, width=12)
-            combo.pack(side="left", padx=(10, 0))
+            binder_btn = self._create_key_binder(row, vars_map[key_name])
+            binder_btn.pack(side="left", padx=(10, 0))
             ttk.Button(row, text="Tap", command=lambda h=hwnd, k=key_name: self.send_skill(h, k)).pack(
                 side="left", padx=(4, 0)
             )

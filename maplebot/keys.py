@@ -166,6 +166,8 @@ def parse_hotkey(name: str):
         return None
     if normalized in KEY_NAME_MAP:
         return KEY_NAME_MAP[normalized]
+    if hasattr(Key, normalized):
+        return getattr(Key, normalized)
     if len(normalized) == 1:
         return KeyCode.from_char(normalized)
     return None

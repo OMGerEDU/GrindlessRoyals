@@ -115,6 +115,8 @@ class MapleBotGUI:
         self.auto_refresh_job: str | None = None
         self.stop_all_key_var = tk.StringVar(value="f8")
         self.keyboard_listener = None
+        self.active_binder: ttk.Button | None = None
+        self.active_binder_var: tk.StringVar | None = None
 
         self._build_layout()
         self.refresh_window_list()
@@ -128,12 +130,12 @@ class MapleBotGUI:
         ttk.Button(toolbar, text="↻ Refresh", command=self.refresh_window_list, width=12).pack(side="left")
         ttk.Button(toolbar, text="⏹ Stop All", command=self.stop_all, width=12).pack(side="left", padx=(4, 0))
         ttk.Label(toolbar, text="Stop All Key:").pack(side="left", padx=(10, 4))
-        ttk.Combobox(
-            toolbar,
-            textvariable=self.stop_all_key_var,
-            values=HOTKEY_CHOICES,
-            width=8
-        ).pack(side="left")
+        stop_all_binder = self._create_key_binder(toolbar, self.stop_all_key_var)
+        stop_all_binder.pack(side="left")
+        def clear_stop_all():
+            self.stop_all_key_var.set("none")
+            stop_all_binder.config(text="none")
+        ttk.Button(toolbar, text="X", width=2, command=clear_stop_all).pack(side="left", padx=(2, 0))
         ttk.Separator(toolbar, orient="vertical").pack(side="left", fill="y", padx=10)
         ttk.Checkbutton(
             toolbar,
@@ -223,13 +225,81 @@ class MapleBotGUI:
             if hwnd not in self.window_tabs:
                 self._create_window_tab(info)
 
-    def _create_key_input(self, parent: ttk.Frame, label_text: str, var: tk.StringVar, choices=COMMON_KEY_CHOICES) -> None:
+    def _cancel_active_binder(self) -> None:
+        if self.active_binder is not None and self.active_binder_var is not None:
+            try:
+                self.active_binder.config(text=self.active_binder_var.get(), state="normal")
+            except Exception:
+                pass
+            self.root.unbind("<Key>")
+            self.active_binder = None
+            self.active_binder_var = None
+
+    def _create_key_binder(self, parent: ttk.Frame, var: tk.StringVar) -> ttk.Button:
+        btn = ttk.Button(parent, text=var.get(), width=12)
+
+        def on_var_change(*args):
+            if self.active_binder != btn:
+                try:
+                    btn.config(text=var.get())
+                except Exception:
+                    pass
+        var.trace_add("write", on_var_change)
+
+        def start_listening():
+            self._cancel_active_binder()
+
+            self.active_binder = btn
+            self.active_binder_var = var
+            btn.config(text="< Press Key >", state="disabled")
+
+            old_focus = self.root.focus_get()
+            self.root.focus_set()
+
+            def on_key_press(event):
+                self.root.unbind("<Key>")
+                self.active_binder = None
+                self.active_binder_var = None
+                
+                try:
+                    btn.config(state="normal")
+                except Exception:
+                    pass
+
+                key_name = map_tkinter_event_to_key(event)
+                var.set(key_name)
+                try:
+                    btn.config(text=key_name)
+                except Exception:
+                    pass
+
+                if old_focus:
+                    try:
+                        old_focus.focus_set()
+                    except Exception:
+                        pass
+                return "break"
+
+            self.root.bind("<Key>", on_key_press)
+
+        btn.config(command=start_listening)
+        return btn
+
+    def _create_key_input(self, parent: ttk.Frame, label_text: str, var: tk.StringVar, allow_none: bool = False) -> None:
         row = ttk.Frame(parent)
         row.pack(fill="x", pady=2)
         ttk.Label(row, text=label_text, width=14).pack(side="left")
-        combo = ttk.Combobox(row, textvariable=var, values=choices, width=12)
-        combo.pack(side="left")
-        ttk.Label(row, text="or type custom", foreground="#888").pack(side="left", padx=(6, 0))
+        
+        binder_btn = self._create_key_binder(row, var)
+        binder_btn.pack(side="left")
+        
+        if allow_none:
+            def clear_key():
+                var.set("none")
+                binder_btn.config(text="none")
+            ttk.Button(row, text="X", width=2, command=clear_key).pack(side="left", padx=(4, 0))
+            
+        ttk.Label(row, text="Click to bind key", foreground="#888").pack(side="left", padx=(8, 0))
 
     def _create_window_tab(self, info: dict[str, int | str]) -> None:
         hwnd = int(info["hwnd"])
@@ -326,7 +396,7 @@ class MapleBotGUI:
         loop_frame = ttk.LabelFrame(settings_frame, text="Attack loop", padding=8)
         loop_frame.pack(fill="x", pady=(0, 8))
         self._create_key_input(loop_frame, "Loop key", vars_map["loop_key"])
-        self._create_key_input(loop_frame, "Stop key", vars_map["stop_key"], choices=HOTKEY_CHOICES)
+        self._create_key_input(loop_frame, "Stop key", vars_map["stop_key"], allow_none=True)
         loop_controls = ttk.Frame(loop_frame)
         loop_controls.pack(fill="x", pady=2)
         ttk.Label(loop_controls, text="Interval (s)", width=14).pack(side="left")

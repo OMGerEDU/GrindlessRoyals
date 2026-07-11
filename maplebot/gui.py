@@ -7,7 +7,6 @@ from tkinter import messagebox, simpledialog, ttk
 
 from .bot import MapleBot
 from .keys import (
-    COMMON_KEY_CHOICES,
     DEFAULT_LOOP_INTERVAL,
     DEFAULT_LOOP_KEY_NAME,
     DEFAULT_POTION_KEY_NAME,
@@ -23,7 +22,6 @@ from .keys import (
 )
 from .windows import enumerate_maple_windows
 MAX_TAB_NAME_LENGTH = 24
-HOTKEY_CHOICES = ("none",) + COMMON_KEY_CHOICES
 
 TK_TO_PYNPUT_MAP = {
     "space": "space",
@@ -330,6 +328,8 @@ class MapleBotGUI:
             "skills_interval": tk.DoubleVar(value=180.0),
             "status": tk.StringVar(value="Stopped"),
             "stop_key": tk.StringVar(value="none"),
+            "anti_afk_enabled": tk.BooleanVar(value=False),
+            "anti_afk_interval": tk.DoubleVar(value=60.0),
         }
         self.window_vars[hwnd] = vars_map
 
@@ -363,6 +363,10 @@ class MapleBotGUI:
                         bot.walk_max_hold = max(bot.walk_min_hold, float(val))
                     elif name == "skills_interval":
                         bot.skills_interval = max(5.0, float(val))
+                    elif name == "anti_afk_enabled":
+                        bot.anti_afk_enabled = bool(val)
+                    elif name == "anti_afk_interval":
+                        bot.anti_afk_interval = max(5.0, float(val))
                     elif name in (
                         "skill_1",
                         "skill_2",
@@ -389,6 +393,7 @@ class MapleBotGUI:
         ttk.Label(header, textvariable=vars_map["status"]).pack(side="right")
         ttk.Label(tab, text=f"HWND {hwnd}", foreground="#888").pack(anchor="w", pady=(0, 8))
         ttk.Separator(tab).pack(fill="x", pady=(0, 8))
+
 
         settings_frame = ttk.Frame(tab)
         settings_frame.pack(fill="both", expand=True)
@@ -449,6 +454,21 @@ class MapleBotGUI:
         ttk.Label(walk_hold_row, text="Hold min/max (s)", width=14).pack(side="left")
         ttk.Entry(walk_hold_row, textvariable=vars_map["walk_min"], width=8).pack(side="left")
         ttk.Entry(walk_hold_row, textvariable=vars_map["walk_max"], width=8).pack(side="left", padx=(4, 0))
+
+        anti_afk_frame = ttk.LabelFrame(settings_frame, text="Anti-AFK", padding=8)
+        anti_afk_frame.pack(fill="x", pady=(0, 8))
+        ttk.Checkbutton(anti_afk_frame, text="Enable Anti-AFK jitter", variable=vars_map["anti_afk_enabled"]).pack(anchor="w")
+        anti_afk_controls = ttk.Frame(anti_afk_frame)
+        anti_afk_controls.pack(fill="x", pady=2)
+        ttk.Label(anti_afk_controls, text="Interval (s)", width=14).pack(side="left")
+        ttk.Scale(
+            anti_afk_controls,
+            from_=5.0,
+            to=300.0,
+            orient="horizontal",
+            variable=vars_map["anti_afk_interval"],
+        ).pack(side="left", fill="x", expand=True)
+        ttk.Entry(anti_afk_controls, textvariable=vars_map["anti_afk_interval"], width=8).pack(side="left", padx=(6, 0))
 
         controls_frame = ttk.Frame(tab)
         controls_frame.pack(fill="x", pady=(4, 8))
@@ -578,6 +598,8 @@ class MapleBotGUI:
             if bool(vars_map[f"skill_{idx}_enabled"].get()):
                 skills_to_use.append(parse_loop_key(str(vars_map[f"skill_{idx}"].get())))
 
+        anti_afk_interval = self._get_float(vars_map["anti_afk_interval"], "Anti-AFK interval", 5.0)
+
         return MapleBot(
             loop_key=parse_loop_key(str(vars_map["loop_key"].get())),
             loop_interval=loop_interval,
@@ -591,6 +613,8 @@ class MapleBotGUI:
             walk_max_hold=walk_max,
             skills_interval=skills_interval,
             skills_to_use=skills_to_use,
+            anti_afk_enabled=bool(vars_map["anti_afk_enabled"].get()),
+            anti_afk_interval=anti_afk_interval,
             window_title=str(self.window_info.get(hwnd, {}).get("title", "Maplestory")),
             target_hwnd=hwnd,
         )
@@ -696,6 +720,67 @@ class MapleBotGUI:
 
         def on_press(key):
             try:
+                is_left = (key == keyboard.Key.left)
+                is_right = (key == keyboard.Key.right)
+
+                if is_left or is_right:
+                    fg_hwnd = 0
+                    try:
+                        import win32gui
+                        fg_hwnd = win32gui.GetForegroundWindow()
+                    except Exception:
+                        pass
+                    
+                    if not fg_hwnd:
+                        try:
+                            import ctypes
+                            fg_hwnd = ctypes.windll.user32.GetForegroundWindow()
+                        except Exception:
+                            pass
+
+                    fg_pid = None
+                    if fg_hwnd:
+                        try:
+                            import win32process
+                            _, fg_pid = win32process.GetWindowThreadProcessId(fg_hwnd)
+                        except Exception:
+                            try:
+                                import ctypes
+                                pid_val = ctypes.c_ulong()
+                                ctypes.windll.user32.GetWindowThreadProcessId(fg_hwnd, ctypes.byref(pid_val))
+                                fg_pid = pid_val.value
+                            except Exception:
+                                pass
+
+                    matched_bot = None
+                    if fg_hwnd:
+                        for h, bot in self.bots.items():
+                            if not bot.running:
+                                continue
+                            if h == fg_hwnd:
+                                matched_bot = bot
+                                break
+                            info = self.window_info.get(h)
+                            if info and info.get("pid") == fg_pid:
+                                matched_bot = bot
+                                break
+
+                    dir_str = "left" if is_left else "right"
+                    if matched_bot:
+                        if not matched_bot.is_simulating_movement:
+                            matched_bot.last_known_direction = dir_str
+                            print(f"[Listener] Matched active window (HWND: {fg_hwnd}, PID: {fg_pid}). Direction set to {dir_str}.")
+                        else:
+                            print(f"[Listener] Ignored bot-simulated movement keypress for matched bot (HWND: {fg_hwnd})")
+                    else:
+                        updated_any = False
+                        for bot in self.bots.values():
+                            if bot.running and not bot.is_simulating_movement:
+                                bot.last_known_direction = dir_str
+                                updated_any = True
+                        if updated_any:
+                            print(f"[Listener] Focused window did not match any bot (HWND: {fg_hwnd}, PID: {fg_pid}). Updated running bots to {dir_str}.")
+
                 # 1. Check Stop All Hotkey
                 if match_key(key, self.stop_all_key_var.get()):
                     self.root.after(0, self.stop_all)

@@ -24,12 +24,20 @@ class KeyParsingTests(unittest.TestCase):
     def test_whitespace_is_ignored(self):
         key = parse_loop_key("  7  ")
         self.assertEqual(key.char, "7")
-    def test_function_keys_and_modifiers(self):
-        key_f1 = parse_loop_key("f1")
-        self.assertIsNotNone(key_f1)
-        
-        key_shift = parse_loop_key("shift")
-        self.assertIsNotNone(key_shift)
+
+    def test_parse_hotkey_valid_and_disabled(self):
+        from maplebot.keys import parse_hotkey
+
+        self.assertIsNone(parse_hotkey("none"))
+        self.assertIsNone(parse_hotkey("disabled"))
+        self.assertIsNone(parse_hotkey(""))
+
+        key_space = parse_hotkey("space")
+        self.assertEqual(key_space.name, "space")
+
+        key_f12 = parse_hotkey("f12")
+        self.assertEqual(key_f12.name, "f12")
+
 
 if __name__ == "__main__":
     unittest.main()

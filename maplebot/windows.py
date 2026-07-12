@@ -25,7 +25,8 @@ except ImportError:
     PYWIN32_AVAILABLE = False
 
 
-DEFAULT_MAPLE_FILTERS = ("maplestory", "mapleroyals", "maplelauncher", "maple")
+DEFAULT_MAPLE_FILTERS = ("MapleRoyals Jan","MapleRoyals Feb","MapleRoyals Mar","MapleRoyals Apr","MapleRoyals May","MapleRoyals Jun","MapleRoyals Jul","MapleRoyals Aug","MapleRoyals Sep","MapleRoyals Oct","MapleRoyals Nov","MapleRoyals Dec")
+
 # Window titles that match a maple filter but should still be ignored
 # (e.g. the MapleBot GUI itself is titled "MapleBot Controller").
 MAPLE_TITLE_IGNORE = ("controller",)

@@ -485,6 +485,9 @@ class MapleBotGUI:
         ttk.Button(controls_frame, text="Identify Window", command=lambda h=hwnd: self.identify_window(h)).pack(
             side="left", padx=(4, 0)
         )
+        ttk.Button(controls_frame, text="Auto Detect Info", command=lambda h=hwnd: self.auto_detect_name_job(h)).pack(
+            side="left", padx=(4, 0)
+        )
         ttk.Button(controls_frame, text="Rename", command=lambda h=hwnd: self.rename_instance(h)).pack(
             side="left", padx=(4, 0)
         )
@@ -572,6 +575,326 @@ class MapleBotGUI:
             self._update_hint(hwnd, "Window identified")
         else:
             messagebox.showwarning("Identify failed", "Could not move this window for identification.")
+
+    def auto_detect_name_job(self, hwnd: int) -> None:
+        import os
+        import time
+        import subprocess
+        import re
+        import tempfile
+        import win32gui
+        import win32ui
+        import ctypes
+
+        info = self.window_info.get(hwnd, {})
+        if hwnd <= 0 or not bool(info.get("has_window", hwnd > 0)):
+            messagebox.showwarning(
+                "No window handle",
+                "This instance was found as a process, but Windows has not exposed a controllable window handle yet.",
+            )
+            return
+
+        bot = self._ensure_bot(hwnd)
+        
+        # 1. Bring window to foreground
+        if not bot.activate_window():
+            messagebox.showerror("OCR Error", "Could not bring the game window to the foreground.")
+            return
+        
+        time.sleep(0.5)
+        
+        # 2. Press 's' to open Stat window
+        if bot.keyboard:
+            bot.is_simulating_movement = True
+            try:
+                from pynput.keyboard import KeyCode
+                char_s = KeyCode.from_char('s')
+                bot.keyboard.press(char_s)
+                time.sleep(0.08)
+                bot.keyboard.release(char_s)
+            finally:
+                bot.is_simulating_movement = False
+                
+        time.sleep(0.6)
+        
+        # 3. Take a screenshot
+        artifact_dir = r"C:\Users\omerd\.gemini\antigravity-ide\brain\3a763f0e-19f3-46e6-b763-feb5a6dbdaad"
+        temp_bmp = os.path.join(artifact_dir, "ocr_capture.bmp")
+        
+        success = False
+        try:
+            rect = win32gui.GetWindowRect(hwnd)
+            left, top, right, bot_coord = rect
+            w = right - left
+            h = bot_coord - top
+            
+            if w > 0 and h > 0:
+                # Capture from screen DC to capture hardware accelerated DirectX backbuffer
+                import win32con
+                hwndDC = win32gui.GetDC(0)
+                mfcDC  = win32ui.CreateDCFromHandle(hwndDC)
+                saveDC = mfcDC.CreateCompatibleDC()
+                saveBitMap = win32ui.CreateBitmap()
+                saveBitMap.CreateCompatibleBitmap(mfcDC, w, h)
+                saveDC.SelectObject(saveBitMap)
+                
+                # Copy from screen coordinates directly
+                saveDC.BitBlt((0, 0), (w, h), mfcDC, (left, top), win32con.SRCCOPY)
+                
+                saveBitMap.SaveBitmapFile(saveDC, temp_bmp)
+                saveDC.DeleteDC()
+                mfcDC.DeleteDC()
+                win32gui.ReleaseDC(0, hwndDC)
+                success = True
+        except Exception as e:
+            print(f"Screenshot capture failed: {e}")
+            messagebox.showerror(
+                "Capture Failed",
+                "Failed to capture a screenshot of the window.\n\n"
+                "If your game client is running as Administrator, you must run this bot as Administrator as well so Windows allows it to capture and send keystrokes."
+            )
+            if os.path.exists(temp_bmp):
+                try: os.remove(temp_bmp)
+                except Exception: pass
+            return
+            
+        # 4. Close 's' window immediately
+        if bot.keyboard:
+            bot.is_simulating_movement = True
+            try:
+                from pynput.keyboard import KeyCode
+                char_s = KeyCode.from_char('s')
+                bot.keyboard.press(char_s)
+                time.sleep(0.08)
+                bot.keyboard.release(char_s)
+            finally:
+                bot.is_simulating_movement = False
+                
+        if not success or not os.path.exists(temp_bmp):
+            if os.path.exists(temp_bmp):
+                try: os.remove(temp_bmp)
+                except Exception: pass
+            messagebox.showerror("OCR Error", "Failed to capture window screenshot.")
+            return
+
+        # 5. Run PowerShell OCR
+        ps_script = f"""
+        Add-Type -AssemblyName System.Drawing
+        Add-Type -AssemblyName System.Runtime.WindowsRuntime
+        
+        # Scale the image to 3x using NearestNeighbor to make pixel fonts highly legible
+        $img = [System.Drawing.Image]::FromFile("{temp_bmp}")
+        $newBmp = New-Object System.Drawing.Bitmap ($img.Width * 3), ($img.Height * 3)
+        $g = [System.Drawing.Graphics]::FromImage($newBmp)
+        $g.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::NearestNeighbor
+        $g.DrawImage($img, 0, 0, $newBmp.Width, $newBmp.Height)
+        $img.Dispose()
+        
+        # Save enhanced image back to the temp path
+        $newBmp.Save("{temp_bmp}")
+        $newBmp.Dispose()
+        $g.Dispose()
+        
+        # Run standard WinRT OCR on the enhanced image
+        $asTaskGeneric = ([System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object {{ $_.Name -eq 'AsTask' -and $_.GetParameters().Count -eq 1 -and $_.GetParameters()[0].ParameterType.Name -like 'IAsyncOperation*' }})[0]
+        function Await-WinRt ($winRtTask, $resultType) {{
+            $asTask = $asTaskGeneric.MakeGenericMethod($resultType)
+            $netTask = $asTask.Invoke($null, @($winRtTask))
+            $netTask.Wait(-1) | Out-Null
+            return $netTask.Result
+        }}
+        $file = Get-Item "{temp_bmp}"
+        $stream = $file.OpenRead()
+        $winrtStream = [System.IO.WindowsRuntimeStreamExtensions]::AsRandomAccessStream($stream)
+        $decoderType = [Windows.Graphics.Imaging.BitmapDecoder, Windows.Graphics.Imaging, ContentType = WindowsRuntime]
+        $decoderOp = $decoderType::CreateAsync($winrtStream)
+        $decoder = Await-WinRt $decoderOp $decoderType
+        $bitmapOp = $decoder.GetSoftwareBitmapAsync()
+        $bitmap = Await-WinRt $bitmapOp ([Windows.Graphics.Imaging.SoftwareBitmap, Windows.Graphics.Imaging, ContentType = WindowsRuntime])
+        $ocrType = [Windows.Media.Ocr.OcrEngine, Windows.Media.Ocr, ContentType = WindowsRuntime]
+        $engine = $ocrType::TryCreateFromUserProfileLanguages()
+        $resultOp = $engine.RecognizeAsync($bitmap)
+        $result = Await-WinRt $resultOp ([Windows.Media.Ocr.OcrResult, Windows.Media.Ocr, ContentType = WindowsRuntime])
+        foreach ($line in $result.Lines) {{
+            Write-Output $line.Text
+        }}
+        $stream.Close()
+        """
+        
+        try:
+            proc = subprocess.Popen(
+                ["powershell", "-Command", ps_script],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                encoding="utf-8",
+                errors="ignore"
+            )
+            stdout, stderr = proc.communicate()
+        except Exception as e:
+            stdout = ""
+            stderr = str(e)
+            
+        if stdout is None:
+            stdout = ""
+        if stderr is None:
+            stderr = ""
+            
+        # Create diagnostic preview file
+        try:
+            preview_file = os.path.join(artifact_dir, "ocr_preview.md")
+            temp_bmp_forward = temp_bmp.replace('\\', '/')
+            with open(preview_file, "w", encoding="utf-8") as f:
+                f.write(f"""# OCR Screen Capture Diagnostic Preview
+
+Here is the screenshot captured by the bot when attempting to run OCR:
+
+![OCR Capture](file:///{temp_bmp_forward})
+
+### OCR Raw Output:
+```
+{stdout}
+```
+""")
+            print(f"[OCR Diagnostic] Written preview to {preview_file}")
+        except Exception as e:
+            print(f"Failed to write diagnostic preview: {e}")
+            
+        if stderr and "OcrEngine" in stderr:
+            messagebox.showerror("OCR Error", "Windows native OCR component is missing or failed.")
+            return
+            
+        # 6. Parse Name and Job
+        name = ""
+        job = ""
+        
+        lines = [l.strip() for l in stdout.splitlines() if l.strip()]
+        print(f"[OCR Raw Lines] Detected {len(lines)} lines: {lines}")
+        
+        # Search for Name (Label-based)
+        for idx, line in enumerate(lines):
+            match_indicator = re.search(r'\b(Name|Nane|Neme|Nare|Nerne|Name:)\b', line, re.IGNORECASE)
+            if match_indicator:
+                after_part = line[match_indicator.end():].strip()
+                after_clean = re.sub(r'^[:;.\-=\s]+', '', after_part).strip()
+                name_words = re.findall(r'[A-Za-z0-9_-]+', after_clean)
+                if name_words and len(name_words[0]) >= 3:
+                    name = name_words[0]
+                    break
+                
+                if idx + 1 < len(lines):
+                    next_line = lines[idx + 1]
+                    next_words = re.findall(r'^[A-Za-z0-9_-]{3,15}$', next_line)
+                    if next_words:
+                        name = next_words[0]
+                        break
+
+        # Search for Job
+        job_idx = -1
+        for idx, line in enumerate(lines):
+            match_indicator = re.search(r'\b(Job|J0b|Jcb|Job:)\b', line, re.IGNORECASE)
+            if match_indicator:
+                job_idx = idx
+                after_part = line[match_indicator.end():].strip()
+                after_clean = re.sub(r'^[:;.\-=\s]+', '', after_part).strip()
+                if len(after_clean) >= 3:
+                    job = after_clean
+                    break
+                if idx + 1 < len(lines):
+                    next_line = lines[idx + 1]
+                    if len(next_line) >= 3:
+                        job = next_line
+                        break
+
+        # Fallback search for Job using known list
+        known_jobs = [
+            "beginner", "noblesse", "legend",
+            "warrior", "fighter", "crusader", "hero", "spearman", "dragon knight", "dark knight", "page", "white knight", "paladin",
+            "magician", "cleric", "priest", "bishop", "wizard", "mage", "arch mage", "archmage",
+            "bowman", "archer", "hunter", "ranger", "bowmaster", "crossbowman", "sniper", "marksman",
+            "thief", "rogue", "assassin", "hermit", "night lord", "bandit", "chief bandit", "shadower",
+            "pirate", "brawler", "marauder", "buccaneer", "gunslinger", "outlaw", "corsair",
+            "dawn warrior", "blaze wizard", "wind archer", "night walker", "thunder breaker", "aran",
+            "swordman", "swordsman"
+        ]
+        if not job:
+            for idx, line in enumerate(lines):
+                line_lower = line.lower()
+                for kj in known_jobs:
+                    if kj in line_lower:
+                        job_idx = idx
+                        if "job" in line_lower:
+                            m = re.search(r'\bjob\s*[:;.-]?\s*(.+)', line, re.IGNORECASE)
+                            if m:
+                                job = m.group(1).strip()
+                            else:
+                                job = kj.capitalize()
+                        else:
+                            job = kj.capitalize()
+                        break
+                if job:
+                    break
+
+        # Proximity-based name fallback: check around the Job line if name wasn't found
+        if not name and job_idx != -1:
+            name_labels = ["name", "nane", "neme", "nare", "nerne", "namo", "hame", "mame", "ability", "character", "stat", "stats", "lv", "level", "hp", "mp", "exp", "ap", "sp", "str", "dex", "int", "luk", "guild", "alliance"]
+            candidates = []
+            for offset in [-1, 1, -2, 2, -3, 3]:
+                check_idx = job_idx + offset
+                if 0 <= check_idx < len(lines):
+                    candidate_line = lines[check_idx].strip()
+                    
+                    has_separator = any(char in candidate_line for char in [":", ";", "-", "="])
+                    if has_separator:
+                        parts = re.split(r'[:;\-=]', candidate_line, maxsplit=1)
+                        potential_name = parts[1].strip()
+                    else:
+                        words = candidate_line.split()
+                        if words and words[0].lower() in name_labels:
+                            potential_name = " ".join(words[1:]).strip()
+                        else:
+                            potential_name = candidate_line.strip()
+                    
+                    clean_name = re.sub(r'[^A-Za-z0-9_-]', '', potential_name)
+                    clean_name_lower = clean_name.lower()
+                    
+                    if 3 <= len(clean_name) <= 15 and clean_name_lower not in name_labels:
+                        if clean_name_lower != job.lower() and clean_name_lower not in [kj.lower() for kj in known_jobs]:
+                            # Scoring: Higher score for cleaner/closer candidate names
+                            score = 10 - abs(offset) # closer is better
+                            if has_separator:
+                                score -= 3 # colons suggest key-value instead of character name
+                            if " " in candidate_line:
+                                score -= 2 # space suggests multiple words
+                            candidates.append((score, clean_name))
+            
+            if candidates:
+                candidates.sort(key=lambda x: x[0], reverse=True)
+                name = candidates[0][1]
+                print(f"[OCR Parser] Proximity-based name extraction matched: '{name}' (candidates evaluated: {candidates})")
+                    
+        if name or job:
+            display_name = ""
+            if name and job:
+                display_name = f"{name} ({job})"
+            elif name:
+                display_name = name
+            else:
+                display_name = job
+                
+            self.instance_name_vars[hwnd].set(display_name)
+            tab_widget = self.window_tabs.get(hwnd)
+            if tab_widget is not None:
+                self.window_notebook.tab(tab_widget, text=format_tab_name(display_name, hwnd))
+            self._update_hint(hwnd, f"Detected: Name={name or '?'}, Job={job or '?'}")
+            messagebox.showinfo("Detection Succeeded", f"Auto-detected character details:\n\nName: {name or 'Unknown'}\nJob: {job or 'Unknown'}")
+        else:
+            preview = "\n".join(lines[:10])
+            messagebox.showwarning(
+                "Detection Failed",
+                f"Could not find 'Name' or 'Job' fields on the screen.\n\nMake sure your Stat (S) window is open and fully visible on the screen.\n\nOCR Raw Output Preview:\n{preview}"
+            )
+
     def _update_hint(self, hwnd: int, message: str) -> None:
         name_var = self.instance_name_vars.get(hwnd)
         title = name_var.get() if name_var is not None else self.window_info.get(hwnd, {}).get("title", "Window")

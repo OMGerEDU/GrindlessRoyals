@@ -319,17 +319,23 @@ class MapleBotGUI:
             "walk_interval": tk.DoubleVar(value=DEFAULT_SHUFFLE_INTERVAL),
             "walk_min": tk.DoubleVar(value=DEFAULT_SHUFFLE_MIN_HOLD),
             "walk_max": tk.DoubleVar(value=DEFAULT_SHUFFLE_MAX_HOLD),
+            "walk_direction_mode": tk.StringVar(value="alternate"),
             "skill_1": tk.StringVar(value="1"),
             "skill_1_enabled": tk.BooleanVar(value=False),
+            "skill_1_delay": tk.DoubleVar(value=1.0),
             "skill_2": tk.StringVar(value="2"),
             "skill_2_enabled": tk.BooleanVar(value=False),
+            "skill_2_delay": tk.DoubleVar(value=1.0),
             "skill_3": tk.StringVar(value="3"),
             "skill_3_enabled": tk.BooleanVar(value=False),
+            "skill_3_delay": tk.DoubleVar(value=1.0),
             "skills_interval": tk.DoubleVar(value=180.0),
             "status": tk.StringVar(value="Stopped"),
             "stop_key": tk.StringVar(value="none"),
             "anti_afk_enabled": tk.BooleanVar(value=False),
             "anti_afk_interval": tk.DoubleVar(value=60.0),
+            "run_timer_enabled": tk.BooleanVar(value=False),
+            "run_timer_minutes": tk.DoubleVar(value=60.0),
         }
         self.window_vars[hwnd] = vars_map
 
@@ -361,6 +367,8 @@ class MapleBotGUI:
                         bot.walk_min_hold = max(0.0, float(val))
                     elif name == "walk_max":
                         bot.walk_max_hold = max(bot.walk_min_hold, float(val))
+                    elif name == "walk_direction_mode":
+                        bot.walk_direction_mode = str(val)
                     elif name == "skills_interval":
                         bot.skills_interval = max(5.0, float(val))
                     elif name == "anti_afk_enabled":
@@ -374,12 +382,29 @@ class MapleBotGUI:
                         "skill_1_enabled",
                         "skill_2_enabled",
                         "skill_3_enabled",
+                        "skill_1_delay",
+                        "skill_2_delay",
+                        "skill_3_delay",
                     ):
                         skills_to_use = []
                         for idx in (1, 2, 3):
                             if bool(vars_map[f"skill_{idx}_enabled"].get()):
-                                skills_to_use.append(parse_loop_key(str(vars_map[f"skill_{idx}"].get())))
+                                key = parse_loop_key(str(vars_map[f"skill_{idx}"].get()))
+                                try:
+                                    delay = max(0.1, float(vars_map[f"skill_{idx}_delay"].get()))
+                                except (ValueError, tk.TclError):
+                                    delay = 1.0
+                                skills_to_use.append((key, delay))
                         bot.skills_to_use = skills_to_use
+                    elif name in ("run_timer_enabled", "run_timer_minutes"):
+                        if bool(vars_map["run_timer_enabled"].get()):
+                            try:
+                                mins = float(vars_map["run_timer_minutes"].get())
+                                bot.run_duration = max(1.0, mins) * 60.0
+                            except (ValueError, tk.TclError):
+                                bot.run_duration = None
+                        else:
+                            bot.run_duration = None
                 except Exception:
                     pass
             return callback
@@ -387,16 +412,52 @@ class MapleBotGUI:
         for name, var in vars_map.items():
             var.trace_add("write", make_trace_callback(hwnd, name, var))
 
+        # ── Fixed header (always visible) ────────────────────────────────────
         header = ttk.Frame(tab)
         header.pack(fill="x")
         ttk.Label(header, textvariable=self.instance_name_vars[hwnd], font=("", 14, "bold")).pack(side="left")
         ttk.Label(header, textvariable=vars_map["status"]).pack(side="right")
-        ttk.Label(tab, text=f"HWND {hwnd}", foreground="#888").pack(anchor="w", pady=(0, 8))
-        ttk.Separator(tab).pack(fill="x", pady=(0, 8))
+        ttk.Label(tab, text=f"HWND {hwnd}", foreground="#888").pack(anchor="w", pady=(0, 4))
+        ttk.Separator(tab).pack(fill="x", pady=(0, 6))
 
+        # ── Scrollable body ───────────────────────────────────────────────────
+        scroll_outer = ttk.Frame(tab)
+        scroll_outer.pack(fill="both", expand=True)
 
-        settings_frame = ttk.Frame(tab)
-        settings_frame.pack(fill="both", expand=True)
+        _canvas = tk.Canvas(scroll_outer, borderwidth=0, highlightthickness=0)
+        _vbar = ttk.Scrollbar(scroll_outer, orient="vertical", command=_canvas.yview)
+        _canvas.configure(yscrollcommand=_vbar.set)
+        _vbar.pack(side="right", fill="y")
+        _canvas.pack(side="left", fill="both", expand=True)
+
+        settings_frame = ttk.Frame(_canvas)
+        canvas_window = _canvas.create_window((0, 0), window=settings_frame, anchor="nw")
+
+        def _on_settings_configure(event, c=_canvas, cw=canvas_window):
+            c.configure(scrollregion=c.bbox("all"))
+            # Keep inner frame same width as canvas
+            c.itemconfig(cw, width=c.winfo_width())
+
+        def _on_canvas_resize(event, c=_canvas, cw=canvas_window):
+            c.itemconfig(cw, width=event.width)
+
+        settings_frame.bind("<Configure>", _on_settings_configure)
+        _canvas.bind("<Configure>", _on_canvas_resize)
+
+        # Mouse-wheel scroll (bind only while cursor is over canvas area)
+        def _on_mousewheel(event, c=_canvas):
+            c.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+        def _bind_wheel(event, c=_canvas):
+            c.bind_all("<MouseWheel>", _on_mousewheel)
+
+        def _unbind_wheel(event, c=_canvas):
+            c.unbind_all("<MouseWheel>")
+
+        _canvas.bind("<Enter>", _bind_wheel)
+        _canvas.bind("<Leave>", _unbind_wheel)
+        settings_frame.bind("<Enter>", _bind_wheel)
+        settings_frame.bind("<Leave>", _unbind_wheel)
 
         loop_frame = ttk.LabelFrame(settings_frame, text="Attack loop", padding=8)
         loop_frame.pack(fill="x", pady=(0, 8))
@@ -470,8 +531,30 @@ class MapleBotGUI:
         ).pack(side="left", fill="x", expand=True)
         ttk.Entry(anti_afk_controls, textvariable=vars_map["anti_afk_interval"], width=8).pack(side="left", padx=(6, 0))
 
-        controls_frame = ttk.Frame(tab)
-        controls_frame.pack(fill="x", pady=(4, 8))
+        # Walk / Anti-AFK direction mode
+        direction_frame = ttk.LabelFrame(settings_frame, text="Movement Direction", padding=8)
+        direction_frame.pack(fill="x", pady=(0, 8))
+        ttk.Label(direction_frame, text="Walk & Anti-AFK direction:").pack(side="left", padx=(0, 8))
+        for mode_val, mode_label in (("alternate", "Alternate L/R"), ("always_left", "Always Left"), ("always_right", "Always Right")):
+            ttk.Radiobutton(
+                direction_frame,
+                text=mode_label,
+                variable=vars_map["walk_direction_mode"],
+                value=mode_val,
+            ).pack(side="left", padx=(0, 10))
+
+        # Run timer
+        timer_frame = ttk.LabelFrame(settings_frame, text="Run Timer", padding=8)
+        timer_frame.pack(fill="x", pady=(0, 8))
+        timer_row = ttk.Frame(timer_frame)
+        timer_row.pack(fill="x")
+        ttk.Checkbutton(timer_row, text="Auto-stop after", variable=vars_map["run_timer_enabled"]).pack(side="left")
+        ttk.Entry(timer_row, textvariable=vars_map["run_timer_minutes"], width=8).pack(side="left", padx=(6, 0))
+        ttk.Label(timer_row, text="minutes  (leave unchecked = run forever)").pack(side="left", padx=(4, 0))
+
+        # ── Controls bar + skill frame go INSIDE the scrollable settings_frame ──
+        controls_frame = ttk.Frame(settings_frame)
+        controls_frame.pack(fill="x", pady=(4, 6))
         ttk.Button(controls_frame, text="Start Loop", command=lambda h=hwnd: self.start_bot(h)).pack(side="left")
         ttk.Button(controls_frame, text="Stop Loop", command=lambda h=hwnd: self.stop_bot(h)).pack(
             side="left", padx=(4, 0)
@@ -495,16 +578,8 @@ class MapleBotGUI:
             side="left", padx=(4, 0)
         )
 
-        skill_frame = ttk.LabelFrame(tab, text="Quick skills (Auto buff)", padding=8)
-        skill_frame.pack(fill="x")
-
-        interval_row = ttk.Frame(skill_frame)
-        interval_row.pack(fill="x", pady=(0, 6))
-        ttk.Label(interval_row, text="Interval (s)", width=14).pack(side="left")
-        ttk.Scale(interval_row, from_=10.0, to=600.0, orient="horizontal", variable=vars_map["skills_interval"]).pack(
-            side="left", fill="x", expand=True
-        )
-        ttk.Entry(interval_row, textvariable=vars_map["skills_interval"], width=8).pack(side="left", padx=(6, 0))
+        skill_frame = ttk.LabelFrame(settings_frame, text="Quick skills (Auto buff)", padding=8)
+        skill_frame.pack(fill="x", pady=(0, 8))
 
         for idx, key_name in enumerate(("skill_1", "skill_2", "skill_3"), start=1):
             row = ttk.Frame(skill_frame)
@@ -516,8 +591,10 @@ class MapleBotGUI:
             ).pack(side="left")
             binder_btn = self._create_key_binder(row, vars_map[key_name])
             binder_btn.pack(side="left", padx=(10, 0))
+            ttk.Label(row, text="Delay (s):").pack(side="left", padx=(10, 2))
+            ttk.Entry(row, textvariable=vars_map[f"{key_name}_delay"], width=6).pack(side="left")
             ttk.Button(row, text="Tap", command=lambda h=hwnd, k=key_name: self.send_skill(h, k)).pack(
-                side="left", padx=(4, 0)
+                side="left", padx=(8, 0)
             )
 
     def _remove_instance_tab(self, hwnd: int) -> None:
@@ -618,8 +695,8 @@ class MapleBotGUI:
         time.sleep(0.6)
         
         # 3. Take a screenshot
-        artifact_dir = r"C:\Users\omerd\.gemini\antigravity-ide\brain\3a763f0e-19f3-46e6-b763-feb5a6dbdaad"
-        temp_bmp = os.path.join(artifact_dir, "ocr_capture.bmp")
+        import tempfile
+        temp_bmp = os.path.join(tempfile.gettempdir(), "maplebot_ocr_capture.bmp")
         
         success = False
         try:
@@ -742,7 +819,7 @@ class MapleBotGUI:
             
         # Create diagnostic preview file
         try:
-            preview_file = os.path.join(artifact_dir, "ocr_preview.md")
+            preview_file = os.path.join(tempfile.gettempdir(), "maplebot_ocr_preview.md")
             temp_bmp_forward = temp_bmp.replace('\\', '/')
             with open(preview_file, "w", encoding="utf-8") as f:
                 f.write(f"""# OCR Screen Capture Diagnostic Preview
@@ -919,9 +996,22 @@ Here is the screenshot captured by the bot when attempting to run OCR:
         skills_to_use = []
         for idx in (1, 2, 3):
             if bool(vars_map[f"skill_{idx}_enabled"].get()):
-                skills_to_use.append(parse_loop_key(str(vars_map[f"skill_{idx}"].get())))
+                key = parse_loop_key(str(vars_map[f"skill_{idx}"].get()))
+                try:
+                    delay = max(0.1, float(vars_map[f"skill_{idx}_delay"].get()))
+                except (ValueError, tk.TclError):
+                    delay = 1.0
+                skills_to_use.append((key, delay))
 
         anti_afk_interval = self._get_float(vars_map["anti_afk_interval"], "Anti-AFK interval", 5.0)
+
+        run_duration: float | None = None
+        if bool(vars_map["run_timer_enabled"].get()):
+            try:
+                mins = float(vars_map["run_timer_minutes"].get())
+                run_duration = max(1.0, mins) * 60.0
+            except (ValueError, tk.TclError):
+                run_duration = None
 
         return MapleBot(
             loop_key=parse_loop_key(str(vars_map["loop_key"].get())),
@@ -934,10 +1024,12 @@ Here is the screenshot captured by the bot when attempting to run OCR:
             walk_interval=walk_interval,
             walk_min_hold=walk_min,
             walk_max_hold=walk_max,
+            walk_direction_mode=str(vars_map["walk_direction_mode"].get()),
             skills_interval=skills_interval,
             skills_to_use=skills_to_use,
             anti_afk_enabled=bool(vars_map["anti_afk_enabled"].get()),
             anti_afk_interval=anti_afk_interval,
+            run_duration=run_duration,
             window_title=str(self.window_info.get(hwnd, {}).get("title", "Maplestory")),
             target_hwnd=hwnd,
         )

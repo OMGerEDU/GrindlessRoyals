@@ -44,6 +44,8 @@ class MapleBot:
         skills_to_use: list | None = None,
         anti_afk_enabled: bool = False,
         anti_afk_interval: float | None = None,
+        run_duration: float | None = None,
+        walk_direction_mode: str = "alternate",
     ):
         self.keyboard = Controller()
         self.window_title = window_title
@@ -64,9 +66,12 @@ class MapleBot:
         self.potion_key = potion_key if potion_key is not None else parse_loop_key(DEFAULT_POTION_KEY_NAME)
         self.potion_enabled = potion_enabled
         self.walk_enabled = walk_enabled
+        # walk_direction_mode: 'alternate' | 'always_left' | 'always_right'
+        self.walk_direction_mode = walk_direction_mode
         self.walk_left = True
 
         self.skills_interval = skills_interval
+        # skills_to_use: list of (key, delay_seconds) tuples
         self.skills_to_use = skills_to_use if skills_to_use is not None else []
 
         self.next_potion = time.time() + self.potion_interval
@@ -77,6 +82,8 @@ class MapleBot:
         self.last_known_direction = "left"
         self.is_simulating_movement = False
         self.next_anti_afk = time.time() + self.anti_afk_interval
+        # run_duration: seconds to run before auto-stop (None = run forever)
+        self.run_duration = run_duration
         self.running = False
         self.loop_thread: threading.Thread | None = None
         self.target_hwnd = target_hwnd
@@ -272,17 +279,26 @@ class MapleBot:
     def _loop_worker(self) -> None:
         print("Action loop started. (Walk in foreground, others in background)")
         if self.walk_enabled:
-            print(f"Walk enabled: interval {self.walk_interval:.1f}s, hold {self.walk_min_hold:.2f}s - {self.walk_max_hold:.2f}s")
+            print(f"Walk enabled: interval {self.walk_interval:.1f}s, hold {self.walk_min_hold:.2f}s - {self.walk_max_hold:.2f}s, mode={self.walk_direction_mode}")
         if self.potion_enabled:
             print(f"Potion enabled: interval {self.potion_interval:.1f}s")
         if self.skills_to_use:
             print(f"Auto buff enabled: interval {self.skills_interval:.1f}s, casting {len(self.skills_to_use)} skills")
+        if self.run_duration is not None:
+            print(f"Run timer: will auto-stop after {self.run_duration:.0f}s ({self.run_duration/60:.1f} min)")
         self.next_potion = time.time() + self.potion_interval
         self.next_walk = time.time() + self.walk_interval
         self.next_skills = time.time() + self.skills_interval
         self.next_anti_afk = time.time() + self.anti_afk_interval
+        loop_start = time.time()
         while self.running:
             current_time = time.time()
+
+            # 0. Run-duration timer check
+            if self.run_duration is not None and (current_time - loop_start) >= self.run_duration:
+                print(f"Run timer expired ({self.run_duration:.0f}s). Auto-stopping loop.")
+                self.running = False
+                break
 
             # 1. Potion auto-use check
             if self.potion_enabled and self.potion_interval > 0 and current_time >= self.next_potion:
@@ -353,17 +369,28 @@ class MapleBot:
         self.is_simulating_movement = True
         try:
             hold_time = random.uniform(self.walk_min_hold, self.walk_max_hold)
-            if self.walk_left:
+            # Determine which direction to move based on mode
+            if self.walk_direction_mode == "always_left":
+                go_left = True
+            elif self.walk_direction_mode == "always_right":
+                go_left = False
+            else:  # alternate
+                go_left = self.walk_left
+
+            if go_left:
                 print(f"Walk move: pausing attack, strafing left for {hold_time:.2f}s")
                 if not self._hold_key(Key.left, hold_time):
                     print("Failed to move left during walk.")
-                self.walk_left = False
+                # Update alternating tracker only in alternate mode
+                if self.walk_direction_mode == "alternate":
+                    self.walk_left = False
                 self.last_known_direction = "left"
             else:
                 print(f"Walk move: pausing attack, strafing right for {hold_time:.2f}s")
                 if not self._hold_key(Key.right, hold_time):
                     print("Failed to move right during walk.")
-                self.walk_left = True
+                if self.walk_direction_mode == "alternate":
+                    self.walk_left = True
                 self.last_known_direction = "right"
         finally:
             self.is_simulating_movement = False
@@ -371,12 +398,28 @@ class MapleBot:
     def _perform_anti_afk(self) -> None:
         self.is_simulating_movement = True
         try:
-            print("Anti-AFK: performing jitter movement")
-            self._hold_key(Key.left, 0.15)
-            time.sleep(0.05)
-            self._hold_key(Key.right, 0.15)
-            
-            restore_key = Key.left if self.last_known_direction == "left" else Key.right
+            print(f"Anti-AFK: performing jitter movement (mode={self.walk_direction_mode})")
+            if self.walk_direction_mode == "always_left":
+                # Jitter left then restore left
+                self._hold_key(Key.left, 0.15)
+                time.sleep(0.05)
+                self._hold_key(Key.left, 0.10)
+                restore_key = Key.left
+                self.last_known_direction = "left"
+            elif self.walk_direction_mode == "always_right":
+                # Jitter right then restore right
+                self._hold_key(Key.right, 0.15)
+                time.sleep(0.05)
+                self._hold_key(Key.right, 0.10)
+                restore_key = Key.right
+                self.last_known_direction = "right"
+            else:
+                # Alternate: left then right, restore to last known
+                self._hold_key(Key.left, 0.15)
+                time.sleep(0.05)
+                self._hold_key(Key.right, 0.15)
+                restore_key = Key.left if self.last_known_direction == "left" else Key.right
+
             time.sleep(0.05)
             try:
                 self.keyboard.press(restore_key)
@@ -390,11 +433,16 @@ class MapleBot:
 
     def _perform_skills_cast(self) -> None:
         print(f"Skills cast: pausing attack, casting {len(self.skills_to_use)} skills")
-        for key in self.skills_to_use:
-            print(f"Casting skill key: {key}")
+        for entry in self.skills_to_use:
+            # Support both (key, delay) tuples and bare keys for backward compat
+            if isinstance(entry, (list, tuple)) and len(entry) == 2:
+                key, delay = entry
+            else:
+                key, delay = entry, 1.0
+            print(f"Casting skill key: {key} (delay: {delay:.2f}s)")
             if not self._tap_key(key):
                 print(f"Failed to tap skill key: {key}")
-            time.sleep(1.0)
+            time.sleep(delay)
 
     def adjust_potion_interval(self, delta: float) -> None:
         if self.shuffle_interval <= 0:

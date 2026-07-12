@@ -26,6 +26,9 @@ except ImportError:
 
 
 DEFAULT_MAPLE_FILTERS = ("maplestory", "mapleroyals", "maplelauncher", "maple")
+# Window titles that match a maple filter but should still be ignored
+# (e.g. the MapleBot GUI itself is titled "MapleBot Controller").
+MAPLE_TITLE_IGNORE = ("controller",)
 PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
 PROCESS_VM_READ = 0x0010
 SW_RESTORE = 9
@@ -213,6 +216,10 @@ def enumerate_maple_windows(window_filter: str | Sequence[str] | None = "Maplest
         title = _get_window_text(hwnd)
         pid, process_name = _get_window_process(hwnd)
         if matches_maple_window(title, process_name, filters):
+            # Skip windows whose title contains an ignored keyword
+            title_lower = (title or "").lower()
+            if any(ign in title_lower for ign in MAPLE_TITLE_IGNORE):
+                return
             if pid is not None:
                 pids_with_windows.add(pid)
             windows.append(

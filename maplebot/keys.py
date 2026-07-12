@@ -145,9 +145,37 @@ COMMON_KEY_CHOICES = (
 )
 
 
+NUMPAD_VK_MAP = {
+    "numpad_0": 96,
+    "numpad_1": 97,
+    "numpad_2": 98,
+    "numpad_3": 99,
+    "numpad_4": 100,
+    "numpad_5": 101,
+    "numpad_6": 102,
+    "numpad_7": 103,
+    "numpad_8": 104,
+    "numpad_9": 105,
+    "numpad_multiply": 106,
+    "numpad_add": 107,
+    "numpad_separator": 108,
+    "numpad_subtract": 109,
+    "numpad_decimal": 110,
+    "numpad_divide": 111,
+}
+
+
 def parse_loop_key(name: str):
     """Convert a human-readable key name into a pynput Key or KeyCode."""
     normalized = name.strip().lower()
+    if normalized in NUMPAD_VK_MAP:
+        vk = NUMPAD_VK_MAP[normalized]
+        if PYNPUT_AVAILABLE:
+            try:
+                return KeyCode.from_vk(vk)
+            except Exception:
+                return KeyCode(vk=vk)
+        return KeyCode(vk=vk)
     if normalized in KEY_NAME_MAP:
         return KEY_NAME_MAP[normalized]
     if hasattr(Key, normalized):
@@ -164,6 +192,14 @@ def parse_hotkey(name: str):
     normalized = name.strip().lower()
     if not normalized or normalized in ("none", "disabled", "null", "false"):
         return None
+    if normalized in NUMPAD_VK_MAP:
+        vk = NUMPAD_VK_MAP[normalized]
+        if PYNPUT_AVAILABLE:
+            try:
+                return KeyCode.from_vk(vk)
+            except Exception:
+                return KeyCode(vk=vk)
+        return KeyCode(vk=vk)
     if normalized in KEY_NAME_MAP:
         return KEY_NAME_MAP[normalized]
     if hasattr(Key, normalized):
@@ -171,3 +207,4 @@ def parse_hotkey(name: str):
     if len(normalized) == 1:
         return KeyCode.from_char(normalized)
     return None
+

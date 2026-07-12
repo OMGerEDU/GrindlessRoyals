@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import ctypes
+from ctypes import wintypes
 import random
 import threading
 import time
@@ -20,6 +22,22 @@ from .keys import (
     parse_loop_key,
 )
 from . import windows as window_api
+
+
+# Set up ctypes function signatures for 64-bit safe execution without pywin32
+try:
+    user32 = ctypes.windll.user32
+    user32.VkKeyScanW.argtypes = [wintypes.WCHAR]
+    user32.VkKeyScanW.restype = wintypes.SHORT
+
+    user32.MapVirtualKeyW.argtypes = [wintypes.UINT, wintypes.UINT]
+    user32.MapVirtualKeyW.restype = wintypes.UINT
+
+    user32.PostMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+    user32.PostMessageW.restype = wintypes.BOOL
+except Exception:
+    pass
+
 
 
 class MapleBot:
@@ -90,9 +108,9 @@ class MapleBot:
 
     def refresh_windows(self) -> None:
         """Refresh list of Maplestory windows."""
-        if self.target_hwnd is not None and window_api.win32gui is not None:
+        if self.target_hwnd is not None:
             try:
-                if window_api.win32gui.IsWindow(self.target_hwnd):
+                if window_api.is_window(self.target_hwnd):
                     self.windows = [self.target_hwnd]
                     self.active_index = 0
                     return
@@ -236,7 +254,14 @@ class MapleBot:
                 if vk == -1:
                     return None
                 return vk & 0xFF
-            return ord(char.upper()) if len(char) == 1 else None
+            else:
+                try:
+                    vk = ctypes.windll.user32.VkKeyScanW(char)
+                    if vk == -1:
+                        return None
+                    return vk & 0xFF
+                except Exception:
+                    return ord(char.upper()) if len(char) == 1 else None
         return None
 
     def _send_background_key(self, key) -> bool:
@@ -255,22 +280,35 @@ class MapleBot:
         if vk is None:
             print(f"Unsupported key for background send: {key}")
             return False
-        if window_api.win32api is None or window_api.win32con is None or window_api.win32gui is None:
-            return False
+
+        has_pywin32 = (window_api.win32api is not None and 
+                       window_api.win32con is not None and 
+                       window_api.win32gui is not None)
 
         try:
-            scan_code = window_api.win32api.MapVirtualKey(vk, 0)
+            if has_pywin32:
+                scan_code = window_api.win32api.MapVirtualKey(vk, 0)
+            else:
+                scan_code = ctypes.windll.user32.MapVirtualKeyW(vk, 0)
+
             lparam = 1 | (scan_code << 16)
             is_extended = vk in (0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x2D, 0x2E)
             if is_extended:
                 lparam |= 0x01000000
-            message = window_api.win32con.WM_KEYDOWN
+
+            WM_KEYDOWN = 0x0100
+            WM_KEYUP = 0x0101
+            message = WM_KEYDOWN
             if not is_down:
                 lparam |= 0xC0000000
-                message = window_api.win32con.WM_KEYUP
+                message = WM_KEYUP
             elif is_repeat:
                 lparam |= 0x40000000
-            window_api.win32gui.PostMessage(hwnd, message, vk, lparam)
+
+            if has_pywin32:
+                window_api.win32gui.PostMessage(hwnd, message, vk, lparam)
+            else:
+                ctypes.windll.user32.PostMessageW(hwnd, message, vk, lparam)
             return True
         except Exception as err:
             print(f"Background key send failed: {err}")

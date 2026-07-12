@@ -50,10 +50,48 @@ TK_TO_PYNPUT_MAP = {
     "Control_R": "ctrl_r",
     "Alt_L": "alt",
     "Alt_R": "alt_r",
+    "KP_0": "numpad_0",
+    "KP_1": "numpad_1",
+    "KP_2": "numpad_2",
+    "KP_3": "numpad_3",
+    "KP_4": "numpad_4",
+    "KP_5": "numpad_5",
+    "KP_6": "numpad_6",
+    "KP_7": "numpad_7",
+    "KP_8": "numpad_8",
+    "KP_9": "numpad_9",
+    "KP_Decimal": "numpad_decimal",
+    "KP_Add": "numpad_add",
+    "KP_Subtract": "numpad_subtract",
+    "KP_Multiply": "numpad_multiply",
+    "KP_Divide": "numpad_divide",
 }
 
 
 def map_tkinter_event_to_key(event) -> str:
+    # On Windows, event.keycode corresponds to the Win32 Virtual Key code (VK)
+    vk = getattr(event, "keycode", 0)
+    numpad_vk_to_name = {
+        96: "numpad_0",
+        97: "numpad_1",
+        98: "numpad_2",
+        99: "numpad_3",
+        100: "numpad_4",
+        101: "numpad_5",
+        102: "numpad_6",
+        103: "numpad_7",
+        104: "numpad_8",
+        105: "numpad_9",
+        106: "numpad_multiply",
+        107: "numpad_add",
+        108: "numpad_separator",
+        109: "numpad_subtract",
+        110: "numpad_decimal",
+        111: "numpad_divide",
+    }
+    if vk in numpad_vk_to_name:
+        return numpad_vk_to_name[vk]
+
     sym = event.keysym
     if sym in TK_TO_PYNPUT_MAP:
         return TK_TO_PYNPUT_MAP[sym]
@@ -65,6 +103,7 @@ def map_tkinter_event_to_key(event) -> str:
         return event.char.lower()
 
     return sym.lower()
+
 
 
 def default_instance_name(info: dict[str, object]) -> str:
@@ -331,6 +370,7 @@ class MapleBotGUI:
             "skill_3_delay": tk.DoubleVar(value=1.0),
             "skills_interval": tk.DoubleVar(value=180.0),
             "status": tk.StringVar(value="Stopped"),
+            "start_key": tk.StringVar(value="none"),
             "stop_key": tk.StringVar(value="none"),
             "anti_afk_enabled": tk.BooleanVar(value=False),
             "anti_afk_interval": tk.DoubleVar(value=60.0),
@@ -462,6 +502,7 @@ class MapleBotGUI:
         loop_frame = ttk.LabelFrame(settings_frame, text="Attack loop", padding=8)
         loop_frame.pack(fill="x", pady=(0, 8))
         self._create_key_input(loop_frame, "Loop key", vars_map["loop_key"])
+        self._create_key_input(loop_frame, "Start key", vars_map["start_key"], allow_none=True)
         self._create_key_input(loop_frame, "Stop key", vars_map["stop_key"], allow_none=True)
         loop_controls = ttk.Frame(loop_frame)
         loop_controls.pack(fill="x", pady=2)
@@ -1135,6 +1176,7 @@ Here is the screenshot captured by the bot when attempting to run OCR:
 
         def on_press(key):
             try:
+                print(f"[Listener] Key pressed: {key}")
                 is_left = (key == keyboard.Key.left)
                 is_right = (key == keyboard.Key.right)
 
@@ -1201,13 +1243,18 @@ Here is the screenshot captured by the bot when attempting to run OCR:
                     self.root.after(0, self.stop_all)
                     return
 
-                # 2. Check individual instance Stop Keys
+                # 2. Check individual instance Start/Stop Keys
                 for hwnd, vars_map in list(self.window_vars.items()):
                     status = vars_map.get("status")
-                    if status is not None and status.get() == "Running":
-                        stop_key_str = vars_map.get("stop_key")
-                        if stop_key_str is not None and match_key(key, stop_key_str.get()):
-                            self.root.after(0, self.stop_bot, hwnd)
+                    if status is not None:
+                        if status.get() == "Running":
+                            stop_key_str = vars_map.get("stop_key")
+                            if stop_key_str is not None and match_key(key, stop_key_str.get()):
+                                self.root.after(0, self.stop_bot, hwnd)
+                        elif status.get() == "Stopped":
+                            start_key_str = vars_map.get("start_key")
+                            if start_key_str is not None and match_key(key, start_key_str.get()):
+                                self.root.after(0, self.start_bot, hwnd)
             except RuntimeError:
                 pass
 

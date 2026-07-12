@@ -25,6 +25,68 @@ except ImportError:
     PYWIN32_AVAILABLE = False
 
 
+# Set up ctypes function signatures for 64-bit safe execution without pywin32
+try:
+    user32 = ctypes.windll.user32
+    user32.IsWindow.argtypes = [wintypes.HWND]
+    user32.IsWindow.restype = wintypes.BOOL
+
+    user32.IsWindowVisible.argtypes = [wintypes.HWND]
+    user32.IsWindowVisible.restype = wintypes.BOOL
+
+    user32.IsIconic.argtypes = [wintypes.HWND]
+    user32.IsIconic.restype = wintypes.BOOL
+
+    user32.GetWindowTextLengthW.argtypes = [wintypes.HWND]
+    user32.GetWindowTextLengthW.restype = ctypes.c_int
+
+    user32.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+    user32.GetWindowTextW.restype = ctypes.c_int
+
+    user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+    user32.GetWindowThreadProcessId.restype = wintypes.DWORD
+
+    kernel32 = ctypes.windll.kernel32
+    kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+
+    kernel32.QueryFullProcessImageNameW.argtypes = [wintypes.HANDLE, wintypes.DWORD, wintypes.LPWSTR, ctypes.POINTER(wintypes.DWORD)]
+    kernel32.QueryFullProcessImageNameW.restype = wintypes.BOOL
+
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+
+    kernel32.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
+    kernel32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+
+    kernel32.Process32FirstW.argtypes = [wintypes.HANDLE, ctypes.c_void_p]
+    kernel32.Process32FirstW.restype = wintypes.BOOL
+
+    kernel32.Process32NextW.argtypes = [wintypes.HANDLE, ctypes.c_void_p]
+    kernel32.Process32NextW.restype = wintypes.BOOL
+
+    user32.EnumWindows.argtypes = [ctypes.c_void_p, wintypes.LPARAM]
+    user32.EnumWindows.restype = wintypes.BOOL
+
+    user32.BringWindowToTop.argtypes = [wintypes.HWND]
+    user32.BringWindowToTop.restype = wintypes.BOOL
+
+    user32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
+    user32.ShowWindow.restype = wintypes.BOOL
+
+    user32.SetForegroundWindow.argtypes = [wintypes.HWND]
+    user32.SetForegroundWindow.restype = wintypes.BOOL
+
+    user32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+    user32.GetWindowRect.restype = wintypes.BOOL
+
+    user32.MoveWindow.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, wintypes.BOOL]
+    user32.MoveWindow.restype = wintypes.BOOL
+except Exception:
+    pass
+
+
+
 DEFAULT_MAPLE_FILTERS = ("MapleRoyals Jan","MapleRoyals Feb","MapleRoyals Mar","MapleRoyals Apr","MapleRoyals May","MapleRoyals Jun","MapleRoyals Jul","MapleRoyals Aug","MapleRoyals Sep","MapleRoyals Oct","MapleRoyals Nov","MapleRoyals Dec")
 
 # Window titles that match a maple filter but should still be ignored

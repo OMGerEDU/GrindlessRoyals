@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import json
+import os
+import time
 import tkinter as tk
 from tkinter import messagebox, simpledialog, ttk
 
@@ -154,6 +157,15 @@ class MapleBotGUI:
         self.keyboard_listener = None
         self.active_binder: ttk.Button | None = None
         self.active_binder_var: tk.StringVar | None = None
+        self._last_bind_time: float = 0.0  # timestamp of last key-bind; used to suppress the first hotkey fire
+
+        # Profile management
+        self.profiles: dict[str, dict] = {}
+        self.default_profile: str = ""
+        self.tab_profile_mappings: dict[str, str] = {}  # instance_name -> profile_name
+        self.profile_comboboxes: dict[int, ttk.Combobox] = {}  # hwnd -> combobox
+        self._profiles_file = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "profiles.json")
+        self.load_profiles_from_disk()
 
         self._build_layout()
         self.refresh_window_list()
@@ -237,6 +249,200 @@ class MapleBotGUI:
         self.refresh_window_list()
         self._schedule_auto_refresh()
 
+    # ── Profile Management ────────────────────────────────────────────────────
+
+    def load_profiles_from_disk(self) -> None:
+        """Load all saved profiles from profiles.json."""
+        try:
+            if os.path.exists(self._profiles_file):
+                with open(self._profiles_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                self.profiles = data.get("profiles", {})
+                self.default_profile = data.get("default_profile", "")
+                self.tab_profile_mappings = data.get("tab_profile_mappings", {})
+        except Exception as e:
+            print(f"[Profiles] Failed to load profiles: {e}")
+            self.profiles = {}
+            self.default_profile = ""
+            self.tab_profile_mappings = {}
+
+    def save_profiles_to_disk(self) -> None:
+        """Persist profiles to profiles.json."""
+        try:
+            data = {
+                "profiles": self.profiles,
+                "default_profile": self.default_profile,
+                "tab_profile_mappings": self.tab_profile_mappings,
+            }
+            with open(self._profiles_file, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            print(f"[Profiles] Failed to save profiles: {e}")
+
+    _PROFILE_VARS = [
+        "loop_key", "loop_interval", "background",
+        "potion_enabled", "potion_key", "potion_interval",
+        "walk_enabled", "walk_interval", "walk_min", "walk_max", "walk_direction_mode",
+        "skill_1", "skill_1_enabled", "skill_1_delay",
+        "skill_2", "skill_2_enabled", "skill_2_delay",
+        "skill_3", "skill_3_enabled", "skill_3_delay",
+        "skills_interval",
+        "start_key", "stop_key",
+        "anti_afk_enabled", "anti_afk_interval",
+        "run_timer_enabled", "run_timer_minutes",
+    ]
+
+    def _extract_vars_to_dict(self, hwnd: int) -> dict:
+        """Read current vars_map values into a plain dict."""
+        vars_map = self.window_vars.get(hwnd, {})
+        data = {}
+        for key in self._PROFILE_VARS:
+            var = vars_map.get(key)
+            if var is not None:
+                try:
+                    data[key] = var.get()
+                except Exception:
+                    pass
+        return data
+
+    def _apply_dict_to_vars(self, hwnd: int, data: dict) -> None:
+        """Write a plain dict of values into the current vars_map."""
+        vars_map = self.window_vars.get(hwnd, {})
+        for key, value in data.items():
+            var = vars_map.get(key)
+            if var is None:
+                continue
+            try:
+                if isinstance(var, tk.BooleanVar):
+                    var.set(bool(value))
+                elif isinstance(var, tk.DoubleVar):
+                    var.set(float(value))
+                elif isinstance(var, tk.StringVar):
+                    var.set(str(value))
+            except Exception:
+                pass
+        # Refresh binder button labels for key binds
+        self._refresh_key_binder_labels(hwnd)
+
+    def _refresh_key_binder_labels(self, hwnd: int) -> None:
+        """After programmatically updating key vars, refresh any binder button texts."""
+        # Binder buttons are stored with their var reference – we trigger a trace-like refresh
+        # by re-setting the same value which fires the trace.
+        vars_map = self.window_vars.get(hwnd, {})
+        for key in ["loop_key", "potion_key", "start_key", "stop_key",
+                    "skill_1", "skill_2", "skill_3"]:
+            var = vars_map.get(key)
+            if var is not None:
+                try:
+                    var.set(var.get())
+                except Exception:
+                    pass
+
+    def save_profile_from_vars(self, hwnd: int, name: str) -> None:
+        """Save current tab settings as a named profile."""
+        name = name.strip()
+        if not name:
+            return
+        self.profiles[name] = self._extract_vars_to_dict(hwnd)
+        instance_name = self._get_instance_name(hwnd)
+        if instance_name:
+            self.tab_profile_mappings[instance_name] = name
+        self.save_profiles_to_disk()
+        self._refresh_all_profile_comboboxes()
+
+    def apply_profile_to_vars(self, hwnd: int, name: str) -> None:
+        """Apply a named profile to the current tab."""
+        if name not in self.profiles:
+            messagebox.showwarning("Profile not found", f"Profile '{name}' does not exist.")
+            return
+        self._apply_dict_to_vars(hwnd, self.profiles[name])
+        instance_name = self._get_instance_name(hwnd)
+        if instance_name:
+            self.tab_profile_mappings[instance_name] = name
+        self.save_profiles_to_disk()
+
+    def delete_profile(self, name: str) -> None:
+        """Delete a saved profile by name."""
+        if name not in self.profiles:
+            return
+        confirmed = messagebox.askyesno(
+            "Delete profile",
+            f"Delete profile '{name}'?\n\nThis cannot be undone.",
+            parent=self.root,
+        )
+        if not confirmed:
+            return
+        del self.profiles[name]
+        if self.default_profile == name:
+            self.default_profile = ""
+        # Remove from tab mappings too
+        self.tab_profile_mappings = {
+            k: v for k, v in self.tab_profile_mappings.items() if v != name
+        }
+        self.save_profiles_to_disk()
+        self._refresh_all_profile_comboboxes()
+
+    def set_default_profile(self, name: str) -> None:
+        """Set a profile as the default for newly detected windows."""
+        self.default_profile = name if name in self.profiles else ""
+        self.save_profiles_to_disk()
+
+    def _get_instance_name(self, hwnd: int) -> str:
+        var = self.instance_name_vars.get(hwnd)
+        return var.get().strip() if var else ""
+
+    def _refresh_all_profile_comboboxes(self) -> None:
+        """Update all profile dropdown lists to reflect current profile names."""
+        names = sorted(self.profiles.keys())
+        for combo in self.profile_comboboxes.values():
+            try:
+                combo["values"] = names
+            except Exception:
+                pass
+
+    def _update_default_label(self, lbl: ttk.Label) -> None:
+        """Refresh a label widget to show the current default profile name."""
+        if self.default_profile:
+            lbl.config(text=f"Default: {self.default_profile}")
+        else:
+            lbl.config(text="No default set")
+
+    def _on_profile_load(self, hwnd: int, combo: ttk.Combobox) -> None:
+        name = combo.get()
+        if not name:
+            messagebox.showwarning("No profile selected", "Please select a profile from the dropdown first.")
+            return
+        self.apply_profile_to_vars(hwnd, name)
+        self._update_hint(hwnd, f"Profile '{name}' loaded")
+
+    def _on_profile_save(self, hwnd: int, combo: ttk.Combobox) -> None:
+        """Save As: prompt for a new name and create/overwrite that profile."""
+        default = combo.get() or ""
+        name = simpledialog.askstring("Save Profile", "Profile name:", initialvalue=default, parent=self.root)
+        if not name or not name.strip():
+            return
+        name = name.strip()
+        self.save_profile_from_vars(hwnd, name)
+        combo.set(name)
+        self._update_hint(hwnd, f"Profile '{name}' saved")
+
+    def _on_profile_overwrite(self, hwnd: int, combo: ttk.Combobox) -> None:
+        """Overwrite the currently selected profile without asking for a new name."""
+        name = combo.get()
+        if not name:
+            messagebox.showwarning("No profile selected", "Please select a profile to overwrite.")
+            return
+        self.save_profile_from_vars(hwnd, name)
+        self._update_hint(hwnd, f"Profile '{name}' overwritten")
+
+    def _auto_apply_profile_on_tab_create(self, hwnd: int, instance_title: str) -> None:
+        """Called shortly after a tab is created to restore its last-used or default profile."""
+        mapped = self.tab_profile_mappings.get(instance_title, "")
+        if mapped and mapped in self.profiles:
+            self._apply_dict_to_vars(hwnd, self.profiles[mapped])
+        elif self.default_profile and self.default_profile in self.profiles:
+            self._apply_dict_to_vars(hwnd, self.profiles[self.default_profile])
+
     def refresh_window_list(self) -> None:
         detected_infos = enumerate_maple_windows("Maplestory")
         infos = filter_deleted_instances(detected_infos, self.deleted_instance_ids)
@@ -297,7 +503,9 @@ class MapleBotGUI:
                 self.root.unbind("<Key>")
                 self.active_binder = None
                 self.active_binder_var = None
-                
+                # Record bind time so the global listener ignores the next press
+                self._last_bind_time = time.time()
+
                 try:
                     btn.config(state="normal")
                 except Exception:
@@ -499,6 +707,56 @@ class MapleBotGUI:
         settings_frame.bind("<Enter>", _bind_wheel)
         settings_frame.bind("<Leave>", _unbind_wheel)
 
+        # ── Profile Manager ───────────────────────────────────────────────────
+        profile_frame = ttk.LabelFrame(settings_frame, text="Profile Manager", padding=8)
+        profile_frame.pack(fill="x", pady=(0, 8))
+
+        profile_row1 = ttk.Frame(profile_frame)
+        profile_row1.pack(fill="x", pady=(0, 4))
+        ttk.Label(profile_row1, text="Profile:", width=10).pack(side="left")
+        profile_names = sorted(self.profiles.keys())
+        profile_combo = ttk.Combobox(profile_row1, values=profile_names, width=22, state="readonly")
+        # Pre-select current profile for this tab if mapped
+        instance_title = default_instance_name(info)
+        mapped = self.tab_profile_mappings.get(instance_title, "")
+        if mapped and mapped in self.profiles:
+            profile_combo.set(mapped)
+        elif self.default_profile and self.default_profile in self.profiles:
+            profile_combo.set(self.default_profile)
+        profile_combo.pack(side="left", padx=(4, 0))
+        self.profile_comboboxes[hwnd] = profile_combo
+
+        ttk.Button(
+            profile_row1, text="Load",
+            command=lambda h=hwnd, cb=profile_combo: self._on_profile_load(h, cb)
+        ).pack(side="left", padx=(6, 0))
+        ttk.Button(
+            profile_row1, text="Save As",
+            command=lambda h=hwnd, cb=profile_combo: self._on_profile_save(h, cb)
+        ).pack(side="left", padx=(4, 0))
+        ttk.Button(
+            profile_row1, text="Overwrite",
+            command=lambda h=hwnd, cb=profile_combo: self._on_profile_overwrite(h, cb)
+        ).pack(side="left", padx=(4, 0))
+        ttk.Button(
+            profile_row1, text="Delete",
+            command=lambda cb=profile_combo: self.delete_profile(cb.get())
+        ).pack(side="left", padx=(4, 0))
+
+        profile_row2 = ttk.Frame(profile_frame)
+        profile_row2.pack(fill="x")
+        def _on_set_default(cb=profile_combo):
+            name = cb.get()
+            if not name:
+                messagebox.showwarning("No profile selected", "Please select a profile first.")
+                return
+            self.set_default_profile(name)
+            self._update_default_label(default_lbl)
+        ttk.Button(profile_row2, text="Set as Default", command=_on_set_default).pack(side="left")
+        default_lbl = ttk.Label(profile_row2, foreground="#777", font=("", 8, "italic"))
+        default_lbl.pack(side="left", padx=(8, 0))
+        self._update_default_label(default_lbl)
+
         loop_frame = ttk.LabelFrame(settings_frame, text="Attack loop", padding=8)
         loop_frame.pack(fill="x", pady=(0, 8))
         self._create_key_input(loop_frame, "Loop key", vars_map["loop_key"])
@@ -638,12 +896,16 @@ class MapleBotGUI:
                 side="left", padx=(8, 0)
             )
 
+        # Auto-apply profile after all widgets are created
+        self.root.after(50, lambda h=hwnd, t=instance_title: self._auto_apply_profile_on_tab_create(h, t))
+
     def _remove_instance_tab(self, hwnd: int) -> None:
         tab = self.window_tabs.pop(hwnd, None)
         if tab is not None:
             self.window_notebook.forget(tab)
         self.window_vars.pop(hwnd, None)
         self.instance_name_vars.pop(hwnd, None)
+        self.profile_comboboxes.pop(hwnd, None)
         bot = self.bots.pop(hwnd, None)
         if bot is not None:
             bot.stop_loop()
@@ -666,6 +928,7 @@ class MapleBotGUI:
         info = self.window_info.get(hwnd, {"hwnd": hwnd})
         current = self.instance_name_vars.get(hwnd)
         initial = current.get() if current is not None else default_instance_name(info)
+        old_name = initial  # capture before dialog
         new_name = simpledialog.askstring("Rename instance", "Instance name:", initialvalue=initial, parent=self.root)
         if new_name is None:
             return
@@ -678,6 +941,12 @@ class MapleBotGUI:
         if tab is not None:
             self.window_notebook.tab(tab, text=format_tab_name(cleaned, hwnd))
         self._update_hint(hwnd, f"Renamed to {cleaned}")
+        # Update tab->profile mapping to use the new name
+        if old_name and old_name in self.tab_profile_mappings:
+            self.tab_profile_mappings[cleaned] = self.tab_profile_mappings.pop(old_name)
+            self.save_profiles_to_disk()
+
+
 
     def identify_window(self, hwnd: int) -> None:
         info = self.window_info.get(hwnd, {})
@@ -1176,6 +1445,10 @@ Here is the screenshot captured by the bot when attempting to run OCR:
 
         def on_press(key):
             try:
+                # Ignore key events briefly after a key has been bound to prevent
+                # the bound key from immediately triggering the action it was just assigned.
+                if time.time() - self._last_bind_time < 0.5:
+                    return
                 print(f"[Listener] Key pressed: {key}")
                 is_left = (key == keyboard.Key.left)
                 is_right = (key == keyboard.Key.right)

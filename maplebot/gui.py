@@ -501,10 +501,10 @@ class MapleBotGUI:
 
             def on_key_press(event):
                 self.root.unbind("<Key>")
-                self.active_binder = None
-                self.active_binder_var = None
                 # Record bind time so the global listener ignores the next press
                 self._last_bind_time = time.time()
+                self.active_binder = None
+                self.active_binder_var = None
 
                 try:
                     btn.config(state="normal")
@@ -1445,6 +1445,9 @@ Here is the screenshot captured by the bot when attempting to run OCR:
 
         def on_press(key):
             try:
+                # Ignore key events while actively choosing/binding a key in the GUI
+                if self.active_binder is not None:
+                    return
                 # Ignore key events briefly after a key has been bound to prevent
                 # the bound key from immediately triggering the action it was just assigned.
                 if time.time() - self._last_bind_time < 0.5:

@@ -66,7 +66,7 @@ class MapleBotStateTests(unittest.TestCase):
         # 7. loop 4 current_time: 1026.0 -> potion
         # 8. loop 4 next_walk time.time() update: 1026.0 -> next_walk = 1051.0
         # 9. loop 5 current_time: raises StopIteration (exits loop)
-        timestamps = [1000.0, 1000.0, 1000.0, 1000.0, 1000.0, 1005.0, 1011.0, 1026.0, 1026.0]
+        timestamps = [1000.0, 1000.0, 1000.0, 1000.0, 1000.0, 1000.0, 1005.0, 1011.0, 1026.0, 1026.0]
         time_iter = iter(timestamps)
         
         class StopLoop(Exception):
@@ -128,7 +128,7 @@ class MapleBotStateTests(unittest.TestCase):
         # 5. loop 2 current_time: 1010.0 -> attack key
         # 6. loop 3 current_time: 1016.0 -> skills triggered (next_skills = 1031.0)
         # 7. loop 4 current_time: raises StopIteration (exits loop)
-        timestamps = [1000.0, 1000.0, 1000.0, 1000.0, 1000.0, 1010.0, 1016.0]
+        timestamps = [1000.0, 1000.0, 1000.0, 1000.0, 1000.0, 1000.0, 1010.0, 1016.0]
         time_iter = iter(timestamps)
         
         class StopLoop(Exception):
@@ -166,7 +166,7 @@ class MapleBotStateTests(unittest.TestCase):
         bot._send_background_key = MagicMock(return_value=True)
         bot.background_loop = True
         
-        timestamps = [1000.0, 1000.0, 1000.0, 1000.0, 1000.0, 1005.0, 1011.0]
+        timestamps = [1000.0, 1000.0, 1000.0, 1000.0, 1000.0, 1000.0, 1005.0, 1011.0]
         time_iter = iter(timestamps)
         
         class StopLoop(Exception):

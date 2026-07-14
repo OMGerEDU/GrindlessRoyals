@@ -209,42 +209,85 @@ class MapleBot:
 
     def _key_to_vk(self, key) -> int | None:
         """Translate pynput Key/KeyCode/str into a virtual-key code."""
-        con = window_api.win32con
-        key_map = {}
-        if con is not None:
-            key_map = {
-                Key.space: con.VK_SPACE,
-                Key.enter: con.VK_RETURN,
-                Key.tab: con.VK_TAB,
-                Key.up: con.VK_UP,
-                Key.down: con.VK_DOWN,
-                Key.left: con.VK_LEFT,
-                Key.right: con.VK_RIGHT,
-                Key.esc: con.VK_ESCAPE,
-                Key.shift: con.VK_SHIFT,
-                Key.ctrl: con.VK_CONTROL,
-                Key.alt: con.VK_MENU,
-            }
-        else:
-            key_map = {
-                Key.space: 0x20,
-                Key.enter: 0x0D,
-                Key.tab: 0x09,
-                Key.up: 0x26,
-                Key.down: 0x28,
-                Key.left: 0x25,
-                Key.right: 0x27,
-                Key.esc: 0x1B,
-                Key.shift: 0x10,
-                Key.ctrl: 0x11,
-                Key.alt: 0x12,
-            }
+        if key is None:
+            return None
 
-        if key in key_map:
-            return key_map[key]
-        if isinstance(key, KeyCode) and getattr(key, "vk", None):
+        # 1. Direct vk attribute (e.g. KeyCode)
+        if hasattr(key, "vk") and key.vk is not None:
             return key.vk
 
+        # 2. Enum value's vk attribute (e.g. pynput.keyboard.Key)
+        if hasattr(key, "value") and hasattr(key.value, "vk") and key.value.vk is not None:
+            return key.value.vk
+
+        # 3. Lookup by name
+        key_name = None
+        if hasattr(key, "name") and key.name is not None:
+            key_name = key.name
+        elif isinstance(key, str):
+            key_name = key
+
+        if key_name:
+            normalized = key_name.strip().lower()
+            # Look up in standard name mapping
+            NAME_TO_VK = {
+                "space": 0x20,
+                "enter": 0x0D,
+                "return": 0x0D,
+                "tab": 0x09,
+                "esc": 0x1B,
+                "escape": 0x1B,
+                "left": 0x25,
+                "up": 0x26,
+                "right": 0x27,
+                "down": 0x28,
+                "home": 0x24,
+                "end": 0x23,
+                "page_up": 0x21,
+                "prior": 0x21,
+                "page_down": 0x22,
+                "next": 0x22,
+                "insert": 0x2D,
+                "delete": 0x2E,
+                "backspace": 0x08,
+                "caps_lock": 0x14,
+                "num_lock": 0x90,
+                "scroll_lock": 0x91,
+                "print_screen": 0x2C,
+                "pause": 0x13,
+                "shift": 0x10,
+                "shift_l": 0x10,
+                "shift_r": 0xA1,
+                "ctrl": 0x11,
+                "ctrl_l": 0x11,
+                "ctrl_r": 0xA3,
+                "alt": 0x12,
+                "alt_l": 0x12,
+                "alt_r": 0xA5,
+                # F keys
+                **{f"f{i}": 0x70 + i - 1 for i in range(1, 25)},
+                # Numpad keys
+                "numpad_0": 96,
+                "numpad_1": 97,
+                "numpad_2": 98,
+                "numpad_3": 99,
+                "numpad_4": 100,
+                "numpad_5": 101,
+                "numpad_6": 102,
+                "numpad_7": 103,
+                "numpad_8": 104,
+                "numpad_9": 105,
+                "numpad_multiply": 106,
+                "numpad_add": 107,
+                "numpad_separator": 108,
+                "numpad_subtract": 109,
+                "numpad_decimal": 110,
+                "numpad_divide": 111,
+            }
+            if normalized in NAME_TO_VK:
+                return NAME_TO_VK[normalized]
+
+        # 4. Fallback to parsing single character strings/attributes
         char = getattr(key, "char", None)
         if char is None and isinstance(key, str):
             char = key
@@ -262,6 +305,7 @@ class MapleBot:
                     return vk & 0xFF
                 except Exception:
                     return ord(char.upper()) if len(char) == 1 else None
+
         return None
 
     def _send_background_key(self, key) -> bool:

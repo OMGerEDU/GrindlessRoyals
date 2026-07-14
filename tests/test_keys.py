@@ -38,6 +38,34 @@ class KeyParsingTests(unittest.TestCase):
         key_f12 = parse_hotkey("f12")
         self.assertEqual(key_f12.name, "f12")
 
+    def test_special_keys_parsed_correctly(self):
+        from maplebot.keys import parse_loop_key
+        key_home = parse_loop_key("home")
+        if hasattr(key_home, "name"):
+            self.assertEqual(key_home.name, "home")
+        else:
+            self.assertEqual(key_home.vk, 0x24)
+
+        key_insert = parse_loop_key("insert")
+        if hasattr(key_insert, "name"):
+            self.assertEqual(key_insert.name, "insert")
+        else:
+            self.assertEqual(key_insert.vk, 0x2D)
+
+    def test_key_to_vk_resolution(self):
+        from maplebot.bot import MapleBot
+        from maplebot.keys import parse_loop_key
+        bot = MapleBot()
+        
+        key_home = parse_loop_key("home")
+        self.assertEqual(bot._key_to_vk(key_home), 0x24)
+        
+        key_space = parse_loop_key("space")
+        self.assertEqual(bot._key_to_vk(key_space), 0x20)
+        
+        key_f8 = parse_loop_key("f8")
+        self.assertEqual(bot._key_to_vk(key_f8), 0x77)
+
 
 if __name__ == "__main__":
     unittest.main()

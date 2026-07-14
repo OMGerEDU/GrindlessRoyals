@@ -1443,6 +1443,18 @@ Here is the screenshot captured by the bot when attempting to run OCR:
                     return event_key.vk == config_key.vk
             return False
 
+        def get_active_tab_hwnd() -> int | None:
+            try:
+                selected_tab = self.window_notebook.select()
+                if not selected_tab:
+                    return None
+                for h, tab in self.window_tabs.items():
+                    if str(tab) == str(selected_tab):
+                        return h
+            except Exception:
+                pass
+            return None
+
         def on_press(key):
             try:
                 # Ignore key events while actively choosing/binding a key in the GUI
@@ -1453,38 +1465,40 @@ Here is the screenshot captured by the bot when attempting to run OCR:
                 if time.time() - self._last_bind_time < 0.5:
                     return
                 print(f"[Listener] Key pressed: {key}")
+
+                # Get the foreground (focused) window HWND and PID
+                fg_hwnd = 0
+                try:
+                    import win32gui
+                    fg_hwnd = win32gui.GetForegroundWindow()
+                except Exception:
+                    pass
+                
+                if not fg_hwnd:
+                    try:
+                        import ctypes
+                        fg_hwnd = ctypes.windll.user32.GetForegroundWindow()
+                    except Exception:
+                        pass
+
+                fg_pid = None
+                if fg_hwnd:
+                    try:
+                        import win32process
+                        _, fg_pid = win32process.GetWindowThreadProcessId(fg_hwnd)
+                    except Exception:
+                        try:
+                            import ctypes
+                            pid_val = ctypes.c_ulong()
+                            ctypes.windll.user32.GetWindowThreadProcessId(fg_hwnd, ctypes.byref(pid_val))
+                            fg_pid = pid_val.value
+                        except Exception:
+                            pass
+
                 is_left = (key == keyboard.Key.left)
                 is_right = (key == keyboard.Key.right)
 
                 if is_left or is_right:
-                    fg_hwnd = 0
-                    try:
-                        import win32gui
-                        fg_hwnd = win32gui.GetForegroundWindow()
-                    except Exception:
-                        pass
-                    
-                    if not fg_hwnd:
-                        try:
-                            import ctypes
-                            fg_hwnd = ctypes.windll.user32.GetForegroundWindow()
-                        except Exception:
-                            pass
-
-                    fg_pid = None
-                    if fg_hwnd:
-                        try:
-                            import win32process
-                            _, fg_pid = win32process.GetWindowThreadProcessId(fg_hwnd)
-                        except Exception:
-                            try:
-                                import ctypes
-                                pid_val = ctypes.c_ulong()
-                                ctypes.windll.user32.GetWindowThreadProcessId(fg_hwnd, ctypes.byref(pid_val))
-                                fg_pid = pid_val.value
-                            except Exception:
-                                pass
-
                     matched_bot = None
                     if fg_hwnd:
                         for h, bot in self.bots.items():
@@ -1519,8 +1533,25 @@ Here is the screenshot captured by the bot when attempting to run OCR:
                     self.root.after(0, self.stop_all)
                     return
 
-                # 2. Check individual instance Start/Stop Keys
+                # 2. Check individual instance Start/Stop Keys (only affect the focused window)
                 for hwnd, vars_map in list(self.window_vars.items()):
+                    is_focused = False
+                    if fg_hwnd:
+                        if fg_hwnd == hwnd:
+                            is_focused = True
+                        else:
+                            info = self.window_info.get(hwnd)
+                            if info and info.get("pid") == fg_pid:
+                                is_focused = True
+                            elif fg_pid == os.getpid():
+                                # Focused window is the GUI or its dialogs. Check if active tab matches.
+                                active_tab_hwnd = get_active_tab_hwnd()
+                                if active_tab_hwnd == hwnd:
+                                    is_focused = True
+
+                    if not is_focused:
+                        continue
+
                     status = vars_map.get("status")
                     if status is not None:
                         if status.get() == "Running":

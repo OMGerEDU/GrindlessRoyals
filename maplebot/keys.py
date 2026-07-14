@@ -145,7 +145,43 @@ COMMON_KEY_CHOICES = (
 )
 
 
-NUMPAD_VK_MAP = {
+NAME_TO_VK = {
+    "space": 0x20,
+    "enter": 0x0D,
+    "return": 0x0D,
+    "tab": 0x09,
+    "esc": 0x1B,
+    "escape": 0x1B,
+    "left": 0x25,
+    "up": 0x26,
+    "right": 0x27,
+    "down": 0x28,
+    "home": 0x24,
+    "end": 0x23,
+    "page_up": 0x21,
+    "prior": 0x21,
+    "page_down": 0x22,
+    "next": 0x22,
+    "insert": 0x2D,
+    "delete": 0x2E,
+    "backspace": 0x08,
+    "caps_lock": 0x14,
+    "num_lock": 0x90,
+    "scroll_lock": 0x91,
+    "print_screen": 0x2C,
+    "pause": 0x13,
+    "shift": 0x10,
+    "shift_l": 0x10,
+    "shift_r": 0xA1,
+    "ctrl": 0x11,
+    "ctrl_l": 0x11,
+    "ctrl_r": 0xA3,
+    "alt": 0x12,
+    "alt_l": 0x12,
+    "alt_r": 0xA5,
+    # F keys
+    **{f"f{i}": 0x70 + i - 1 for i in range(1, 25)},
+    # Numpad keys
     "numpad_0": 96,
     "numpad_1": 97,
     "numpad_2": 98,
@@ -168,18 +204,18 @@ NUMPAD_VK_MAP = {
 def parse_loop_key(name: str):
     """Convert a human-readable key name into a pynput Key or KeyCode."""
     normalized = name.strip().lower()
-    if normalized in NUMPAD_VK_MAP:
-        vk = NUMPAD_VK_MAP[normalized]
+    if normalized in KEY_NAME_MAP:
+        return KEY_NAME_MAP[normalized]
+    if hasattr(Key, normalized):
+        return getattr(Key, normalized)
+    if normalized in NAME_TO_VK:
+        vk = NAME_TO_VK[normalized]
         if PYNPUT_AVAILABLE:
             try:
                 return KeyCode.from_vk(vk)
             except Exception:
                 return KeyCode(vk=vk)
         return KeyCode(vk=vk)
-    if normalized in KEY_NAME_MAP:
-        return KEY_NAME_MAP[normalized]
-    if hasattr(Key, normalized):
-        return getattr(Key, normalized)
     if len(normalized) == 1:
         return KeyCode.from_char(normalized)
 
@@ -192,18 +228,18 @@ def parse_hotkey(name: str):
     normalized = name.strip().lower()
     if not normalized or normalized in ("none", "disabled", "null", "false"):
         return None
-    if normalized in NUMPAD_VK_MAP:
-        vk = NUMPAD_VK_MAP[normalized]
+    if normalized in KEY_NAME_MAP:
+        return KEY_NAME_MAP[normalized]
+    if hasattr(Key, normalized):
+        return getattr(Key, normalized)
+    if normalized in NAME_TO_VK:
+        vk = NAME_TO_VK[normalized]
         if PYNPUT_AVAILABLE:
             try:
                 return KeyCode.from_vk(vk)
             except Exception:
                 return KeyCode(vk=vk)
         return KeyCode(vk=vk)
-    if normalized in KEY_NAME_MAP:
-        return KEY_NAME_MAP[normalized]
-    if hasattr(Key, normalized):
-        return getattr(Key, normalized)
     if len(normalized) == 1:
         return KeyCode.from_char(normalized)
     return None

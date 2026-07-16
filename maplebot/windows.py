@@ -88,18 +88,21 @@ except Exception:
 
 
 DEFAULT_MAPLE_FILTERS = (
-    "MapleRoyals Jan",
-    "MapleRoyals Feb",
-    "MapleRoyals Mar",
-    "MapleRoyals Apr",
-    "MapleRoyals May",
-    "MapleRoyals Jun",
-    "MapleRoyals Jul",
-    "MapleRoyals Aug",
-    "MapleRoyals Sep",
-    "MapleRoyals Oct",
-    "MapleRoyals Nov",
-    "MapleRoyals Dec",
+    "mapleroyals",
+    "maplelauncher",
+    "maple",
+    "mapleroyals jan",
+    "mapleroyals feb",
+    "mapleroyals mar",
+    "mapleroyals apr",
+    "mapleroyals may",
+    "mapleroyals jun",
+    "mapleroyals jul",
+    "mapleroyals aug",
+    "mapleroyals sep",
+    "mapleroyals oct",
+    "mapleroyals nov",
+    "mapleroyals dec",
 )
 
 

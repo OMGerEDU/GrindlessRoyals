@@ -1874,6 +1874,24 @@ Here is the screenshot captured by the bot when attempting to run OCR:
                 print("Created chmac skipInit file to bypass interactive prompts.")
             except Exception as e:
                 print(f"Error creating skipInit file: {e}")
+                
+        # Automatically create devcon.bat helper to bypass official DevCon executable download
+        thirdparty_dir = os.path.join(data_dir, "3rdparty")
+        if os.path.exists(thirdparty_dir):
+            devcon_bat = os.path.join(thirdparty_dir, "devcon.bat")
+            if not os.path.exists(devcon_bat):
+                try:
+                    with open(devcon_bat, "w", encoding="utf-8") as f:
+                        f.write('@echo off\n')
+                        f.write('if "%~1"=="restart" (\n')
+                        f.write('    setlocal enabledelayedexpansion\n')
+                        f.write('    set "DEVICE_PATTERN=%~2"\n')
+                        f.write('    powershell -Command "Get-NetAdapter | Where-Object PnpDeviceID -like \'*!DEVICE_PATTERN!*\' | Restart-NetAdapter -Confirm:$false"\n')
+                        f.write('    endlocal\n')
+                        f.write(')\n')
+                    print("Created devcon.bat helper for automatic adapter restart.")
+                except Exception as e:
+                    print(f"Error creating devcon.bat helper: {e}")
 
     def _load_adapters(self) -> list[dict[str, str]]:
         chmac_dir, chmac_bat = self._get_chmac_path()

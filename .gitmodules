@@ -1,0 +1,3 @@
+[submodule "MacChanger/chmac"]
+	path = MacChanger/chmac
+	url = https://github.com/wandersick/chmac.git

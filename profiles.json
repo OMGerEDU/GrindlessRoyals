@@ -28,10 +28,50 @@
       "anti_afk_interval": 20.0,
       "run_timer_enabled": false,
       "run_timer_minutes": 60.0
+    },
+    "omer": {
+      "loop_key": "c",
+      "loop_interval": 0.2,
+      "background": true,
+      "potion_enabled": false,
+      "potion_key": "7",
+      "potion_interval": 60.0,
+      "walk_enabled": false,
+      "walk_interval": 60.0,
+      "walk_min": 0.25,
+      "walk_max": 0.5,
+      "walk_direction_mode": "alternate",
+      "skill_1": "1",
+      "skill_1_enabled": false,
+      "skill_1_delay": 1.0,
+      "skill_2": "2",
+      "skill_2_enabled": false,
+      "skill_2_delay": 1.0,
+      "skill_3": "3",
+      "skill_3_enabled": false,
+      "skill_3_delay": 1.0,
+      "skills_interval": 180.0,
+      "start_key": "numpad_2",
+      "stop_key": "numpad_8",
+      "anti_afk_enabled": false,
+      "anti_afk_interval": 20.0,
+      "run_timer_enabled": false,
+      "run_timer_minutes": 60.0,
+      "meso_hotkey": "none",
+      "meso_amount": "50000",
+      "meso_delay": 0.1,
+      "meso_x": 780,
+      "meso_y": 580,
+      "meso_disable_cursor": false,
+      "meso_start_delay": 0.0
     }
   },
-  "default_profile": "alen",
+  "default_profile": "omer",
   "tab_profile_mappings": {
-    "MapleRoyals Jul  2 2026 IMG": "alen"
+    "MapleRoyals Jul  2 2026 IMG": "alen",
+    "ena (Hunter)": "omer",
+    "Ice light": "omer",
+    "Rap": "omer",
+    "Dror": "omer"
   }
 }

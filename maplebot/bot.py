@@ -64,6 +64,13 @@ class MapleBot:
         anti_afk_interval: float | None = None,
         run_duration: float | None = None,
         walk_direction_mode: str = "alternate",
+        meso_dropper_enabled: bool = False,
+        meso_amount: int = 50000,
+        meso_delay: float = 0.1,
+        meso_x: int = 780,
+        meso_y: int = 580,
+        meso_disable_cursor: bool = False,
+        meso_start_delay: float = 0.0,
     ):
         self.keyboard = Controller()
         self.window_title = window_title
@@ -105,6 +112,14 @@ class MapleBot:
         self.running = False
         self.loop_thread: threading.Thread | None = None
         self.target_hwnd = target_hwnd
+        self.meso_dropper_enabled = meso_dropper_enabled
+        self.meso_amount = meso_amount
+        self.meso_delay = meso_delay
+        self.meso_x = meso_x
+        self.meso_y = meso_y
+        self.meso_disable_cursor = meso_disable_cursor
+        self.meso_start_delay = meso_start_delay
+        self._last_background_target_log: tuple[int, int] | None = None
 
     def refresh_windows(self) -> None:
         """Refresh list of Maplestory windows."""
@@ -552,9 +567,13 @@ class MapleBot:
         self.next_potion = time.time() + self.potion_interval
         self.next_walk = time.time() + self.walk_interval
         self.next_skills = time.time() + self.skills_interval
-        self.loop_thread = threading.Thread(target=self._loop_worker, daemon=True)
+        target_worker = self._meso_dropper_worker if getattr(self, "meso_dropper_enabled", False) else self._loop_worker
+        self.loop_thread = threading.Thread(target=target_worker, daemon=True)
         self.loop_thread.start()
-        print("F3: loop ON")
+        if getattr(self, "meso_dropper_enabled", False):
+            print("Meso dropper loop ON")
+        else:
+            print("F3: loop ON")
 
     def stop_loop(self) -> None:
         if not self.running:
@@ -562,10 +581,117 @@ class MapleBot:
         self.running = False
         if self.loop_thread is not None:
             self.loop_thread.join(timeout=1.0)
-        print("F3: loop OFF")
+        if getattr(self, "meso_dropper_enabled", False):
+            print("Meso dropper loop OFF")
+        else:
+            print("F3: loop OFF")
 
     def toggle_loop(self) -> None:
         if self.running:
             self.stop_loop()
         else:
             self.start_loop()
+
+    def _meso_dropper_worker(self) -> None:
+        print("Meso dropper loop started.")
+        if getattr(self, "meso_start_delay", 0.0) > 0:
+            time.sleep(self.meso_start_delay)
+        while self.running:
+            self._click_meso_coin()
+            time.sleep(0.08)
+            if not self.running:
+                break
+            self._send_meso_amount()
+            time.sleep(0.08)
+            if not self.running:
+                break
+            self._send_meso_enter()
+            time.sleep(self.meso_delay)
+        print("Meso dropper loop stopped.")
+
+    def _click_meso_coin(self) -> None:
+        target = self.hwnd
+        if target is None:
+            return
+        x = self.meso_x
+        y = self.meso_y
+        
+        if self.background_loop:
+            input_target = window_api.choose_background_target(target)
+            lParam = (y << 16) | x
+            WM_LBUTTONDOWN = 0x0201
+            WM_LBUTTONUP = 0x0202
+            
+            has_pywin32 = (window_api.win32api is not None and 
+                           window_api.win32con is not None and 
+                           window_api.win32gui is not None)
+            try:
+                if has_pywin32:
+                    window_api.win32gui.PostMessage(input_target, WM_LBUTTONDOWN, 1, lParam)
+                    time.sleep(0.01)
+                    window_api.win32gui.PostMessage(input_target, WM_LBUTTONUP, 0, lParam)
+                else:
+                    ctypes.windll.user32.PostMessageW(input_target, WM_LBUTTONDOWN, 1, lParam)
+                    time.sleep(0.01)
+                    ctypes.windll.user32.PostMessageW(input_target, WM_LBUTTONUP, 0, lParam)
+            except Exception as e:
+                print(f"Background click failed: {e}")
+        else:
+            if not self.activate_window():
+                return
+            if getattr(self, "meso_disable_cursor", False):
+                try:
+                    ctypes.windll.user32.mouse_event(0x0002, 0, 0, 0, 0) # Left down
+                    time.sleep(0.02)
+                    ctypes.windll.user32.mouse_event(0x0004, 0, 0, 0, 0) # Left up
+                except Exception as e:
+                    print(f"Foreground click failed: {e}")
+            else:
+                try:
+                    rect = window_api.get_window_rect(target)
+                    if rect:
+                        left, top, right, bottom = rect
+                        screen_x = left + x
+                        screen_y = top + y
+                        ctypes.windll.user32.SetCursorPos(screen_x, screen_y)
+                        time.sleep(0.05)
+                        ctypes.windll.user32.mouse_event(0x0002, 0, 0, 0, 0) # Left down
+                        time.sleep(0.02)
+                        ctypes.windll.user32.mouse_event(0x0004, 0, 0, 0, 0) # Left up
+                except Exception as e:
+                    print(f"Foreground click failed: {e}")
+
+    def _send_meso_amount(self) -> None:
+        amount_str = str(self.meso_amount)
+        if self.background_loop:
+            target = self.hwnd
+            if target is None:
+                return
+            input_target = window_api.choose_background_target(target)
+            for char in amount_str:
+                self._post_message_key(input_target, char, True)
+                time.sleep(0.01)
+                self._post_message_key(input_target, char, False)
+                time.sleep(0.01)
+        else:
+            try:
+                self.keyboard.type(amount_str)
+            except Exception as e:
+                print(f"Foreground type failed: {e}")
+
+    def _send_meso_enter(self) -> None:
+        if self.background_loop:
+            target = self.hwnd
+            if target is None:
+                return
+            input_target = window_api.choose_background_target(target)
+            self._post_message_key(input_target, Key.enter, True)
+            time.sleep(0.01)
+            self._post_message_key(input_target, Key.enter, False)
+        else:
+            try:
+                self.keyboard.press(Key.enter)
+                time.sleep(0.02)
+                self.keyboard.release(Key.enter)
+            except Exception as e:
+                print(f"Foreground enter failed: {e}")

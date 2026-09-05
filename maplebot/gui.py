@@ -300,6 +300,8 @@ class MapleBotGUI:
         "start_key", "stop_key",
         "anti_afk_enabled", "anti_afk_interval",
         "run_timer_enabled", "run_timer_minutes",
+        "meso_hotkey", "meso_amount", "meso_delay", "meso_x", "meso_y",
+        "meso_disable_cursor", "meso_start_delay",
     ]
 
     def _extract_vars_to_dict(self, hwnd: int) -> dict:
@@ -327,6 +329,8 @@ class MapleBotGUI:
                     var.set(bool(value))
                 elif isinstance(var, tk.DoubleVar):
                     var.set(float(value))
+                elif isinstance(var, tk.IntVar):
+                    var.set(int(value))
                 elif isinstance(var, tk.StringVar):
                     var.set(str(value))
             except Exception:
@@ -340,7 +344,7 @@ class MapleBotGUI:
         # by re-setting the same value which fires the trace.
         vars_map = self.window_vars.get(hwnd, {})
         for key in ["loop_key", "potion_key", "start_key", "stop_key",
-                    "skill_1", "skill_2", "skill_3"]:
+                    "skill_1", "skill_2", "skill_3", "meso_hotkey"]:
             var = vars_map.get(key)
             if var is not None:
                 try:
@@ -594,6 +598,13 @@ class MapleBotGUI:
             "anti_afk_interval": tk.DoubleVar(value=60.0),
             "run_timer_enabled": tk.BooleanVar(value=False),
             "run_timer_minutes": tk.DoubleVar(value=60.0),
+            "meso_hotkey": tk.StringVar(value="none"),
+            "meso_amount": tk.StringVar(value="50000"),
+            "meso_delay": tk.DoubleVar(value=0.1),
+            "meso_x": tk.IntVar(value=780),
+            "meso_y": tk.IntVar(value=580),
+            "meso_disable_cursor": tk.BooleanVar(value=False),
+            "meso_start_delay": tk.DoubleVar(value=0.0),
         }
         self.window_vars[hwnd] = vars_map
 
@@ -663,6 +674,18 @@ class MapleBotGUI:
                                 bot.run_duration = None
                         else:
                             bot.run_duration = None
+                    elif name == "meso_amount":
+                        bot.meso_amount = int(val)
+                    elif name == "meso_delay":
+                        bot.meso_delay = max(0.01, float(val))
+                    elif name == "meso_x":
+                        bot.meso_x = int(val)
+                    elif name == "meso_y":
+                        bot.meso_y = int(val)
+                    elif name == "meso_disable_cursor":
+                        bot.meso_disable_cursor = bool(val)
+                    elif name == "meso_start_delay":
+                        bot.meso_start_delay = max(0.0, float(val))
                 except Exception:
                     pass
             return callback
@@ -860,6 +883,70 @@ class MapleBotGUI:
         ttk.Checkbutton(timer_row, text="Auto-stop after", variable=vars_map["run_timer_enabled"]).pack(side="left")
         ttk.Entry(timer_row, textvariable=vars_map["run_timer_minutes"], width=8).pack(side="left", padx=(6, 0))
         ttk.Label(timer_row, text="minutes  (leave unchecked = run forever)").pack(side="left", padx=(4, 0))
+
+        # Meso Dropper
+        meso_frame = ttk.LabelFrame(settings_frame, text="Meso Dropper", padding=8)
+        meso_frame.pack(fill="x", pady=(0, 8))
+        
+        self._create_key_input(meso_frame, "Meso hotkey", vars_map["meso_hotkey"], allow_none=True)
+        
+        meso_settings_row = ttk.Frame(meso_frame)
+        meso_settings_row.pack(fill="x", pady=2)
+        ttk.Label(meso_settings_row, text="Amount:", width=10).pack(side="left")
+        ttk.Entry(meso_settings_row, textvariable=vars_map["meso_amount"], width=12).pack(side="left")
+        
+        ttk.Label(meso_settings_row, text="Delay (s):", width=10).pack(side="left", padx=(10, 0))
+        ttk.Entry(meso_settings_row, textvariable=vars_map["meso_delay"], width=6).pack(side="left")
+
+        meso_config_row = ttk.Frame(meso_frame)
+        meso_config_row.pack(fill="x", pady=2)
+        ttk.Checkbutton(
+            meso_config_row,
+            text="Disable cursor allocation",
+            variable=vars_map["meso_disable_cursor"],
+        ).pack(side="left")
+        
+        ttk.Label(meso_config_row, text="Start delay (s):").pack(side="left", padx=(20, 0))
+        ttk.Entry(meso_config_row, textvariable=vars_map["meso_start_delay"], width=6).pack(side="left")
+        
+        meso_coord_row = ttk.Frame(meso_frame)
+        meso_coord_row.pack(fill="x", pady=2)
+        ttk.Label(meso_coord_row, text="Coin X:", width=10).pack(side="left")
+        ttk.Entry(meso_coord_row, textvariable=vars_map["meso_x"], width=8).pack(side="left")
+        
+        ttk.Label(meso_coord_row, text="Coin Y:", width=10).pack(side="left", padx=(10, 0))
+        ttk.Entry(meso_coord_row, textvariable=vars_map["meso_y"], width=8).pack(side="left")
+        
+        ttk.Button(
+            meso_coord_row,
+            text="Set from Cursor",
+            command=lambda h=hwnd: self.calibrate_meso_coord(h)
+        ).pack(side="left", padx=(10, 0))
+        
+        meso_actions_row = ttk.Frame(meso_frame)
+        meso_actions_row.pack(fill="x", pady=2)
+        ttk.Button(
+            meso_actions_row,
+            text="Start Meso Dropper",
+            command=lambda h=hwnd: self.start_meso_dropper(h)
+        ).pack(side="left")
+        ttk.Button(
+            meso_actions_row,
+            text="Stop Meso Dropper",
+            command=lambda h=hwnd: self.stop_meso_dropper(h)
+        ).pack(side="left", padx=(4, 0))
+        ttk.Button(
+            meso_actions_row,
+            text="Test Click",
+            command=lambda h=hwnd: self.test_meso_click(h)
+        ).pack(side="left", padx=(4, 0))
+        
+        ttk.Label(
+            meso_frame,
+            text="* Note: Meso Dropper disables the rest of the bot loop while running.",
+            foreground="#555",
+            font=("", 8, "italic"),
+        ).pack(anchor="w", pady=(4, 0))
 
         # ── Controls bar + skill frame go INSIDE the scrollable settings_frame ──
         controls_frame = ttk.Frame(settings_frame)
@@ -1333,6 +1420,23 @@ Here is the screenshot captured by the bot when attempting to run OCR:
             except (ValueError, tk.TclError):
                 run_duration = None
 
+        try:
+            meso_amount = int(vars_map["meso_amount"].get())
+        except (ValueError, tk.TclError):
+            meso_amount = 50000
+
+        try:
+            meso_delay = float(vars_map["meso_delay"].get())
+        except (ValueError, tk.TclError):
+            meso_delay = 0.1
+
+        try:
+            meso_x = int(vars_map["meso_x"].get())
+            meso_y = int(vars_map["meso_y"].get())
+        except (ValueError, tk.TclError):
+            meso_x = 780
+            meso_y = 580
+
         return MapleBot(
             loop_key=parse_loop_key(str(vars_map["loop_key"].get())),
             loop_interval=loop_interval,
@@ -1352,6 +1456,13 @@ Here is the screenshot captured by the bot when attempting to run OCR:
             run_duration=run_duration,
             window_title=str(self.window_info.get(hwnd, {}).get("title", "Maplestory")),
             target_hwnd=hwnd,
+            meso_dropper_enabled=False, # Managed dynamically or by the specific start command
+            meso_amount=meso_amount,
+            meso_delay=meso_delay,
+            meso_x=meso_x,
+            meso_y=meso_y,
+            meso_disable_cursor=bool(vars_map.get("meso_disable_cursor", tk.BooleanVar(value=False)).get()),
+            meso_start_delay=float(vars_map.get("meso_start_delay", tk.DoubleVar(value=0.0)).get()),
         )
 
     def start_bot(self, hwnd: int) -> None:
@@ -1380,6 +1491,133 @@ Here is the screenshot captured by the bot when attempting to run OCR:
         if hwnd in self.window_vars:
             self.window_vars[hwnd]["status"].set("Stopped")
         self._update_hint(hwnd, "Loop stopped")
+
+    def start_meso_dropper(self, hwnd: int) -> None:
+        try:
+            bot = self._build_bot_from_vars(hwnd)
+        except ValueError as err:
+            messagebox.showerror("Invalid value", str(err))
+            return
+
+        existing = self.bots.get(hwnd)
+        if existing is not None:
+            existing.stop_loop()
+        self.bots[hwnd] = bot
+        bot.refresh_windows()
+        if not bot.windows:
+            messagebox.showwarning("Window not found", "Target window no longer exists.")
+            return
+
+        vars_map = self.window_vars[hwnd]
+        try:
+            bot.meso_amount = int(vars_map["meso_amount"].get())
+            if bot.meso_amount <= 0:
+                raise ValueError("Amount must be a positive integer.")
+        except ValueError:
+            messagebox.showerror("Invalid value", "Meso amount must be a positive integer.")
+            return
+
+        try:
+            bot.meso_delay = float(vars_map["meso_delay"].get())
+            if bot.meso_delay < 0.01:
+                raise ValueError("Delay must be at least 0.01s.")
+        except ValueError:
+            messagebox.showerror("Invalid value", "Delay must be a positive number.")
+            return
+
+        try:
+            bot.meso_x = int(vars_map["meso_x"].get())
+            bot.meso_y = int(vars_map["meso_y"].get())
+        except ValueError:
+            messagebox.showerror("Invalid value", "Coordinates X and Y must be integers.")
+            return
+
+        try:
+            bot.meso_disable_cursor = bool(vars_map["meso_disable_cursor"].get())
+        except (ValueError, tk.TclError):
+            bot.meso_disable_cursor = False
+
+        try:
+            bot.meso_start_delay = float(vars_map["meso_start_delay"].get())
+            if bot.meso_start_delay < 0.0:
+                raise ValueError()
+        except ValueError:
+            messagebox.showerror("Invalid value", "Start delay must be a non-negative number.")
+            return
+
+        bot.meso_dropper_enabled = True
+        bot.start_loop()
+        self.window_vars[hwnd]["status"].set("Meso Dropping")
+        self._update_hint(hwnd, "Meso dropper started")
+
+    def stop_meso_dropper(self, hwnd: int) -> None:
+        bot = self.bots.get(hwnd)
+        if bot is not None:
+            bot.stop_loop()
+        if hwnd in self.window_vars:
+            self.window_vars[hwnd]["status"].set("Stopped")
+        self._update_hint(hwnd, "Meso dropper stopped")
+
+    def calibrate_meso_coord(self, hwnd: int) -> None:
+        info = self.window_info.get(hwnd, {})
+        if hwnd <= 0 or not bool(info.get("has_window", hwnd > 0)):
+            messagebox.showwarning(
+                "No window handle",
+                "This instance was found as a process, but Windows has not exposed a controllable window handle yet.",
+            )
+            return
+
+        def countdown(seconds: int):
+            if seconds > 0:
+                self._update_hint(hwnd, f"Calibrating in {seconds} seconds... Place cursor on the coin symbol.")
+                self.root.after(1000, lambda: countdown(seconds - 1))
+            else:
+                try:
+                    import win32gui
+                    screen_x, screen_y = win32gui.GetCursorPos()
+                except Exception:
+                    try:
+                        import ctypes
+                        from ctypes import wintypes
+                        class POINT(ctypes.Structure):
+                            _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
+                        pt = POINT()
+                        ctypes.windll.user32.GetCursorPos(ctypes.byref(pt))
+                        screen_x, screen_y = pt.x, pt.y
+                    except Exception as e:
+                        self._update_hint(hwnd, f"Failed to get cursor pos: {e}")
+                        return
+
+                from . import windows as win_api_mod
+                rect = win_api_mod.get_window_rect(hwnd)
+                if rect is not None:
+                    left, top, right, bottom = rect
+                    client_x = screen_x - left
+                    client_y = screen_y - top
+                    
+                    vars_map = self.window_vars.get(hwnd)
+                    if vars_map:
+                        vars_map["meso_x"].set(client_x)
+                        vars_map["meso_y"].set(client_y)
+                    self._update_hint(hwnd, f"Calibration complete: X={client_x}, Y={client_y}")
+                    messagebox.showinfo("Calibration Complete", f"Successfully calibrated coin coordinates!\n\nX: {client_x}\nY: {client_y}")
+                else:
+                    self._update_hint(hwnd, "Failed to get window rectangle for conversion.")
+
+        countdown(5)
+
+    def test_meso_click(self, hwnd: int) -> None:
+        bot = self._ensure_bot(hwnd)
+        vars_map = self.window_vars[hwnd]
+        try:
+            bot.meso_x = int(vars_map["meso_x"].get())
+            bot.meso_y = int(vars_map["meso_y"].get())
+        except ValueError:
+            messagebox.showerror("Invalid value", "Coordinates X and Y must be integers.")
+            return
+
+        self._update_hint(hwnd, "Sending test click...")
+        bot._click_meso_coin()
 
     def focus_window(self, hwnd: int) -> None:
         bot = self._ensure_bot(hwnd)
@@ -1564,14 +1802,26 @@ Here is the screenshot captured by the bot when attempting to run OCR:
 
                     status = vars_map.get("status")
                     if status is not None:
-                        if status.get() == "Running":
-                            stop_key_str = vars_map.get("stop_key")
-                            if stop_key_str is not None and match_key(key, stop_key_str.get()):
+                        start_key_str = vars_map.get("start_key")
+                        stop_key_str = vars_map.get("stop_key")
+                        meso_hotkey_str = vars_map.get("meso_hotkey")
+                        
+                        if start_key_str is not None and match_key(key, start_key_str.get()):
+                            if status.get() == "Meso Dropping":
+                                self.root.after(0, self.stop_meso_dropper, hwnd)
+                            self.root.after(0, self.start_bot, hwnd)
+                        elif stop_key_str is not None and match_key(key, stop_key_str.get()):
+                            if status.get() == "Running":
                                 self.root.after(0, self.stop_bot, hwnd)
-                        elif status.get() == "Stopped":
-                            start_key_str = vars_map.get("start_key")
-                            if start_key_str is not None and match_key(key, start_key_str.get()):
-                                self.root.after(0, self.start_bot, hwnd)
+                            elif status.get() == "Meso Dropping":
+                                self.root.after(0, self.stop_meso_dropper, hwnd)
+                        elif meso_hotkey_str is not None and match_key(key, meso_hotkey_str.get()):
+                            if status.get() == "Meso Dropping":
+                                self.root.after(0, self.stop_meso_dropper, hwnd)
+                            else:
+                                if status.get() == "Running":
+                                    self.root.after(0, self.stop_bot, hwnd)
+                                self.root.after(0, self.start_meso_dropper, hwnd)
             except RuntimeError:
                 pass
 

@@ -441,3 +441,115 @@ def identify_window(hwnd: int, offset: int = 80, pause: float = 0.25) -> bool:
     restored = move_window(hwnd, left, top, width, height)
     activate_window(hwnd)
     return restored
+
+
+def _get_class_name(hwnd: int) -> str:
+    try:
+        if win32gui is not None:
+            return win32gui.GetClassName(hwnd)
+        buffer = ctypes.create_unicode_buffer(256)
+        ctypes.windll.user32.GetClassNameW(hwnd, buffer, 256)
+        return buffer.value
+    except Exception:
+        return ""
+
+
+def _is_window_enabled(hwnd: int) -> bool:
+    try:
+        return bool(ctypes.windll.user32.IsWindowEnabled(hwnd))
+    except Exception:
+        return True
+
+
+class WindowTargetInfo(TypedDict):
+    hwnd: int
+    parent: int
+    class_name: str
+    title: str
+    visible: bool
+    enabled: bool
+
+
+def enumerate_child_windows(top_hwnd: int) -> list[WindowTargetInfo]:
+    children = []
+    if top_hwnd <= 0:
+        return children
+
+    if win32gui is not None:
+        try:
+            def callback(hwnd, extra):
+                try:
+                    visible = bool(win32gui.IsWindowVisible(hwnd))
+                    enabled = _is_window_enabled(hwnd)
+                    class_name = win32gui.GetClassName(hwnd)
+                    title = win32gui.GetWindowText(hwnd)
+                    children.append({
+                        "hwnd": hwnd,
+                        "parent": top_hwnd,
+                        "class_name": class_name,
+                        "title": title,
+                        "visible": visible,
+                        "enabled": enabled
+                    })
+                except Exception:
+                    pass
+                return True
+            win32gui.EnumChildWindows(top_hwnd, callback, None)
+        except Exception:
+            pass
+    else:
+        try:
+            enum_child_proc = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+            @enum_child_proc
+            def callback(hwnd, lparam):
+                try:
+                    visible = bool(ctypes.windll.user32.IsWindowVisible(hwnd))
+                    enabled = _is_window_enabled(hwnd)
+                    class_name = _get_class_name(hwnd)
+                    title = _get_window_text(hwnd)
+                    children.append({
+                        "hwnd": int(hwnd),
+                        "parent": top_hwnd,
+                        "class_name": class_name,
+                        "title": title,
+                        "visible": visible,
+                        "enabled": enabled
+                    })
+                except Exception:
+                    pass
+                return True
+            ctypes.windll.user32.EnumChildWindows(top_hwnd, callback, 0)
+        except Exception:
+            pass
+    return sorted(children, key=lambda c: c["hwnd"])
+
+
+INPUT_CLASS_HINTS = ("render", "widget", "canvas", "game", "maple", "asteria")
+
+
+def choose_background_target(top_hwnd: int, candidates: list[WindowTargetInfo] | None = None) -> int:
+    if candidates is None:
+        candidates = enumerate_child_windows(top_hwnd)
+
+    best_hwnd = top_hwnd
+    best_rank = -1
+
+    for c in candidates:
+        if not c["visible"] or not c["enabled"]:
+            continue
+        
+        cls_lower = c["class_name"].lower()
+        rank = -1
+        for i, hint in enumerate(INPUT_CLASS_HINTS):
+            if hint in cls_lower:
+                rank = len(INPUT_CLASS_HINTS) - i
+                break
+        
+        if rank > best_rank:
+            best_rank = rank
+            best_hwnd = c["hwnd"]
+        elif rank == best_rank and rank != -1:
+            if best_hwnd == top_hwnd or c["hwnd"] < best_hwnd:
+                best_hwnd = c["hwnd"]
+
+    return best_hwnd
